@@ -1,0 +1,387 @@
+/* Shared controls: buttons, pills, inputs, underline tabs, menus, badges. */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: var(--pill);
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background 0.12s, box-shadow 0.12s, color 0.12s;
+}
+
+.btn.sm {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.btn.primary {
+  background: var(--primary);
+  color: var(--text-inverse);
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+.btn.secondary {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-xs);
+}
+
+.btn.secondary:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.btn.ghost {
+  color: var(--text-2);
+}
+
+.btn.ghost:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.btn .count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  color: var(--text);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--pill);
+  color: var(--text-2);
+  transition: background 0.12s, color 0.12s;
+}
+
+.icon-btn.sm {
+  width: 24px;
+  height: 24px;
+}
+
+.icon-btn:hover:not(:disabled),
+.icon-btn[aria-pressed='true'] {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.icon-btn.raised {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Search input: a soft pill with a leading icon. */
+.search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 120px;
+}
+
+.search svg {
+  position: absolute;
+  left: 10px;
+  color: var(--text-3);
+  pointer-events: none;
+}
+
+.search input {
+  width: 100%;
+  height: 30px;
+  padding: 0 10px 0 30px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  outline: none;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+.search input::placeholder {
+  color: var(--text-3);
+}
+
+.search input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Underline tabs ("Grid view / List view"). */
+.utabs {
+  display: flex;
+  gap: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.utabs button {
+  position: relative;
+  padding: 0 0 8px;
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-weight: 450;
+}
+
+.utabs button:hover {
+  color: var(--text);
+}
+
+.utabs button[aria-selected='true'] {
+  color: var(--text);
+  font-weight: 550;
+}
+
+.utabs button[aria-selected='true']::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--primary);
+}
+
+/* Pastel status badges. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.badge.green {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.badge.red {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.badge.blue {
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+.badge.amber {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
+.badge.neutral {
+  background: var(--surface-3);
+  color: var(--text-2);
+}
+
+kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  color: var(--text-2);
+  font: 500 10.5px var(--font);
+}
+
+/* Menus and popovers: white cards with a soft shadow. */
+.popover {
+  position: fixed;
+  z-index: 1000;
+  min-width: 200px;
+  max-width: 300px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  animation: pop-in 0.12s ease-out;
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  text-align: left;
+  color: var(--text);
+}
+
+.menu-item:hover:not(:disabled),
+.menu-item[data-active='true'] {
+  background: var(--surface-hover);
+}
+
+.menu-item.danger {
+  color: var(--red);
+}
+
+.menu-item .icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.menu-item .label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu-item .trail {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.menu-sep {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--border);
+}
+
+.menu-title {
+  padding: 5px 8px 3px;
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+
+.check {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--text-inverse);
+}
+
+/* Floating pill bars over the canvas. */
+.float-bar {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--pill);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+
+.float-bar .sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 3px;
+  background: var(--border-strong);
+}
+
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: var(--pill);
+  background: var(--surface-3);
+}
+
+.segmented button {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--pill);
+  color: var(--text-2);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+
+.segmented button[aria-pressed='true'] {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-xs);
+}
+
+.avatar {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.avatar.sm {
+  width: 18px;
+  height: 18px;
+  font-size: 9.5px;
+}
+
+.empty-state {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  height: 100%;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-2);
+}
+
+.empty-state .glyph {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+}
+
+.empty-state h2 {
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.empty-state p {
+  max-width: 320px;
+}

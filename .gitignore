@@ -1,0 +1,11 @@
+node_modules
+dist
+.DS_Store
+# Generated media: test sources and the proxy ladder built from them.
+media/
+public/media/
+
+# Local tool config
+.claude/
+.env*.local
+.vercel

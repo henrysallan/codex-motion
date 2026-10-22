@@ -1,0 +1,37 @@
+{
+  "name": "codex-motion",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Motion moodboard: a reference canvas where every clip plays at once",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run typecheck && vite build",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts",
+    "gen:clips": "node scripts/gen-test-clips.ts",
+    "build:proxies": "node scripts/build-proxies.ts",
+    "test": "node --test 'scripts/test/*.test.ts'"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "@webgpu/types": "^0.1.74",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "idb": "^8.0.4",
+    "lucide-react": "^1.61.0",
+    "mediabunny": "^1.62.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "zustand": "^5.0.16"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/henrysallan/codex-motion"
+  }
+}

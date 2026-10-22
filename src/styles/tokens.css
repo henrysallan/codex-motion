@@ -1,0 +1,91 @@
+/* Design tokens. Light is the default; dark applies when the user picks it
+   or when the system is dark and they haven't picked light. The canvas
+   colours here are mirrored in src/app/theme.ts for the GPU views. */
+
+:root {
+  --font: 'Inter Variable', 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --app-bg: #edecea;
+  --surface: #ffffff;
+  --surface-2: #f6f5f4;
+  --surface-3: #efeeec;
+  --surface-hover: #f3f2f1;
+  --board-bg: #f7f6f5;
+
+  --border: rgb(0 0 0 / 0.07);
+  --border-strong: rgb(0 0 0 / 0.12);
+
+  --text: #18181a;
+  --text-2: #6b6a70;
+  --text-3: #a3a2a7;
+  --text-inverse: #ffffff;
+
+  --primary: #18181a;
+  --primary-hover: #2c2c30;
+  --accent: #3b7bf6;
+  --accent-soft: rgb(59 123 246 / 0.12);
+  --focus-ring: rgb(59 123 246 / 0.35);
+
+  --green: #1f8a4c;
+  --green-soft: #e6f5ec;
+  --red: #d23c3c;
+  --red-soft: #fcebeb;
+  --blue: #2b6fd6;
+  --blue-soft: #e8f0fc;
+  --amber: #b26b00;
+  --amber-soft: #fbf1e0;
+
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.05);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.04), 0 2px 6px rgb(0 0 0 / 0.04);
+  --shadow-md: 0 1px 2px rgb(0 0 0 / 0.04), 0 6px 20px rgb(0 0 0 / 0.07);
+  --shadow-lg: 0 2px 6px rgb(0 0 0 / 0.05), 0 16px 40px rgb(0 0 0 / 0.12);
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+  --pill: 999px;
+
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --app-bg: #0d0d0e;
+  --surface: #18181a;
+  --surface-2: #1f1f22;
+  --surface-3: #26262a;
+  --surface-hover: #232326;
+  --board-bg: #131314;
+
+  --border: rgb(255 255 255 / 0.075);
+  --border-strong: rgb(255 255 255 / 0.13);
+
+  --text: #ededef;
+  --text-2: #9d9ca3;
+  --text-3: #66656c;
+  --text-inverse: #18181a;
+
+  --primary: #ededef;
+  --primary-hover: #ffffff;
+  --accent: #5b92ff;
+  --accent-soft: rgb(91 146 255 / 0.16);
+  --focus-ring: rgb(91 146 255 / 0.45);
+
+  --green: #4fc985;
+  --green-soft: rgb(79 201 133 / 0.13);
+  --red: #f07070;
+  --red-soft: rgb(240 112 112 / 0.13);
+  --blue: #6ea2ff;
+  --blue-soft: rgb(110 162 255 / 0.14);
+  --amber: #f0b45a;
+  --amber-soft: rgb(240 180 90 / 0.13);
+
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.35), 0 2px 6px rgb(0 0 0 / 0.25);
+  --shadow-md: 0 1px 2px rgb(0 0 0 / 0.35), 0 8px 24px rgb(0 0 0 / 0.35);
+  --shadow-lg: 0 2px 6px rgb(0 0 0 / 0.4), 0 18px 44px rgb(0 0 0 / 0.5);
+
+  color-scheme: dark;
+}

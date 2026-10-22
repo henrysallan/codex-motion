@@ -1,0 +1,366 @@
+// The Canvas pane: the active collection's board. The BoardController does
+// the interaction work; this component wires it to React chrome: header,
+// toolbar, selection bar, focus bar, notes, menus and the HUD.
+
+import {
+  ArrowDownToLine,
+  ArrowUpToLine,
+  Crosshair,
+  Grid3x3,
+  Hand,
+  Image as ImageIcon,
+  LayoutGrid,
+  Maximize,
+  MousePointer2,
+  Redo2,
+  Rows3,
+  ScanEye,
+  Sparkles,
+  StickyNote,
+  Trash2,
+  Undo2,
+  Upload,
+} from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { CameraState } from '../../engine/protocol.ts';
+import { Button, EmptyState, IconButton } from '../../ui/controls.tsx';
+import { Menu, type MenuEntry } from '../../ui/popover.tsx';
+import type { Rect } from '../camera.ts';
+import { engine, useEngineView } from '../engine.ts';
+import { plural } from '../format.ts';
+import { ingestFiles } from '../ingest.ts';
+import {
+  deleteItems,
+  notesOf,
+  redo,
+  renameCollection,
+  setActiveTarget,
+  setCover,
+  togglePane,
+  undo,
+  updatePrefs,
+  useStore,
+} from '../store.ts';
+import { useResolvedTheme } from '../theme.ts';
+import { BoardController, type Tool } from './BoardController.ts';
+import { FocusBar } from './FocusBar.tsx';
+import { Hud } from './Hud.tsx';
+import { NotesLayer } from './NotesLayer.tsx';
+import { boardRegistry } from './registry.ts';
+
+export function CanvasPane({ collectionId }: { collectionId: string }) {
+  const host = useRef<HTMLDivElement>(null);
+  const notesRef = useRef<HTMLDivElement>(null);
+  const view = useEngineView(host, 'board');
+  const theme = useResolvedTheme();
+  const [ctrl, setCtrl] = useState<BoardController | null>(null);
+  const [camera, setCamera] = useState<CameraState>({ x: 0, y: 0, zoom: 1 });
+  const [selRect, setSelRect] = useState<Rect | null>(null);
+  const [tool, setTool] = useState<Tool>('select');
+  const [menu, setMenu] = useState<{ x: number; y: number; hit: string | null } | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [fileDrag, setFileDrag] = useState(false);
+  const collection = useStore((s) => s.collections[collectionId]);
+  const placementCount = useStore((s) => {
+    let n = 0;
+    for (const p of Object.values(s.placements)) if (p.collectionId === collectionId) n++;
+    return n;
+  });
+  const noteCount = useStore((s) => notesOf(collectionId, s.notes).length);
+  const selection = useStore((s) => s.selection);
+  const focus = useStore((s) => (s.focus?.collectionId === collectionId ? s.focus : null));
+  const hud = useStore((s) => s.hud);
+  const feedOpen = useStore((s) => s.panes.feed);
+
+  useEffect(() => {
+    if (!view || !host.current || !notesRef.current) return;
+    const c = new BoardController(host.current, notesRef.current, view, collectionId, {
+      onCamera: setCamera,
+      onSelectionRect: (r) => setSelRect((prev) => (sameRect(prev, r) ? prev : r)),
+      onTool: setTool,
+      onContextMenu: (x, y, hit) => setMenu({ x, y, hit }),
+      onEditNote: setEditing,
+    });
+    setCtrl(c);
+    boardRegistry.current = c;
+    host.current.focus({ preventScroll: true });
+    return () => {
+      if (boardRegistry.current === c) boardRegistry.current = null;
+      c.dispose();
+      setCtrl(null);
+    };
+  }, [view, collectionId]);
+
+  useEffect(() => ctrl?.setTheme(theme), [ctrl, theme]);
+
+  useEffect(
+    () =>
+      engine.on((msg) => {
+        if (msg.type === 'focusTime' && ctrl) ctrl.focusTime = msg.time;
+      }),
+    [ctrl],
+  );
+
+  // Files dropped from the desktop land where they're dropped.
+  const onDragOver = (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes('Files')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    setFileDrag(true);
+  };
+  const onDrop = (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes('Files') || !ctrl || !host.current) return;
+    e.preventDefault();
+    setFileDrag(false);
+    const r = host.current.getBoundingClientRect();
+    const [wx, wy] = ctrl.camera.toWorld(e.clientX - r.left, e.clientY - r.top);
+    void ingestFiles([...e.dataTransfer.files], collectionId, { x: wx, y: wy });
+  };
+
+  const menuItems = useMemo((): MenuEntry[] => {
+    if (!menu || !ctrl) return [];
+    const placement = menu.hit ? ctrl.placementById(menu.hit) : undefined;
+    if (menu.hit) {
+      const multi = selection.length > 1;
+      return [
+        ...(placement
+          ? [
+              { label: 'Focus', icon: <ScanEye size={15} />, trail: 'Double-click', onSelect: () => ctrl.enterFocus(placement.id) },
+              { label: 'Find similar', icon: <Sparkles size={15} />, trail: 'M2', disabled: true },
+              { label: 'Use as cover', icon: <ImageIcon size={15} />, onSelect: () => setCover(collectionId, placement.assetId) },
+              'separator' as const,
+            ]
+          : []),
+        ...(multi
+          ? [
+              { label: 'Arrange as grid', icon: <LayoutGrid size={15} />, onSelect: () => ctrl.arrangeSelection('grid') },
+              { label: 'Arrange in a row', icon: <Rows3 size={15} />, onSelect: () => ctrl.arrangeSelection('row') },
+            ]
+          : []),
+        { label: 'Bring to front', icon: <ArrowUpToLine size={15} />, onSelect: () => ctrl.bringToFront() },
+        { label: 'Send to back', icon: <ArrowDownToLine size={15} />, onSelect: () => ctrl.sendToBack() },
+        'separator' as const,
+        { label: multi ? `Delete ${selection.length} items` : 'Delete', icon: <Trash2 size={15} />, danger: true, trail: '⌫', onSelect: () => deleteItems(collectionId, selection) },
+      ];
+    }
+    return [
+      {
+        label: 'Add note here',
+        icon: <StickyNote size={15} />,
+        trail: 'N',
+        onSelect: () => {
+          ctrl.setTool('note');
+        },
+      },
+      { label: 'Fit all', icon: <Maximize size={15} />, trail: 'F', onSelect: () => ctrl.fitAll() },
+    ];
+  }, [menu, ctrl, selection, collectionId]);
+
+  const empty = placementCount === 0 && noteCount === 0;
+  const target = useStore((s) => s.user.activeTargetId === collectionId);
+
+  return (
+    <div className={`board ${fileDrag ? 'file-drag' : ''}`} onDragOver={onDragOver} onDragLeave={() => setFileDrag(false)} onDrop={onDrop}>
+      <div className="board-host" ref={host} tabIndex={0} data-tool={tool}>
+        <div className="notes-layer" ref={notesRef}>
+          <NotesLayer collectionId={collectionId} ctrl={ctrl} editing={editing} setEditing={setEditing} />
+        </div>
+      </div>
+
+      {collection && (
+        <div className="board-head">
+          <BoardTitle name={collection.name} onRename={(n) => renameCollection(collectionId, n)} />
+          <span className="board-count">{plural(placementCount, 'clip')}</span>
+          <IconButton label={target ? 'Clear active target' : 'Set as active target'} size="sm" pressed={target} onClick={() => setActiveTarget(target ? null : collectionId)}>
+            <Crosshair size={15} />
+          </IconButton>
+        </div>
+      )}
+
+      <div className="board-corner">
+        <ZoomMenu zoom={camera.zoom} ctrl={ctrl} />
+      </div>
+
+      {!focus && (
+        <BoardToolbar
+          tool={tool}
+          ctrl={ctrl}
+          canUndo={useStore.getState().history[collectionId]?.undo.length !== 0}
+          collectionId={collectionId}
+        />
+      )}
+
+      {selRect && !focus && selection.length > 0 && ctrl && <SelectionBar rect={selRect} count={selection.length} ctrl={ctrl} collectionId={collectionId} />}
+
+      {focus && ctrl && <FocusBar ctrl={ctrl} focus={focus} />}
+
+      {empty && (
+        <div className="board-empty">
+          <EmptyState
+            icon={<Upload size={22} />}
+            title="Drop clips here"
+            action={
+              !feedOpen && (
+                <Button variant="secondary" onClick={() => togglePane('feed')}>
+                  <Sparkles size={15} />
+                  Open the Feed
+                </Button>
+              )
+            }
+          >
+            Drag videos, GIFs or images from your computer, or add clips from the Feed.
+          </EmptyState>
+        </div>
+      )}
+
+      {fileDrag && <div className="file-drop-hint">Drop to add to {collection?.name}</div>}
+      {menu && <Menu anchor={{ x: menu.x, y: menu.y }} items={menuItems} onClose={() => setMenu(null)} />}
+      {hud && ctrl && <Hud ctrl={ctrl} onClose={() => updatePrefs({ hud: false })} />}
+    </div>
+  );
+}
+
+function sameRect(a: Rect | null, b: Rect | null): boolean {
+  if (!a || !b) return a === b;
+  return Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5 && Math.abs(a.w - b.w) < 0.5 && Math.abs(a.h - b.h) < 0.5;
+}
+
+function BoardTitle({ name, onRename }: { name: string; onRename: (n: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  if (editing) {
+    return (
+      <input
+        className="rename board-rename"
+        autoFocus
+        defaultValue={name}
+        onFocus={(e) => e.currentTarget.select()}
+        onBlur={(e) => {
+          onRename(e.currentTarget.value);
+          setEditing(false);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+          if (e.key === 'Escape') {
+            e.currentTarget.value = name;
+            e.currentTarget.blur();
+          }
+        }}
+      />
+    );
+  }
+  return (
+    <h2 className="board-title" onDoubleClick={() => setEditing(true)} title="Double-click to rename">
+      {name}
+    </h2>
+  );
+}
+
+function ZoomMenu({ zoom, ctrl }: { zoom: number; ctrl: BoardController | null }) {
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const hud = useStore((s) => s.hud);
+  return (
+    <>
+      <div className="float-bar small">
+        <button type="button" className="zoom-btn" onClick={(e) => setAnchor(anchor ? null : e.currentTarget)}>
+          {Math.round(zoom * 100)}%
+        </button>
+      </div>
+      {anchor && ctrl && (
+        <Menu
+          anchor={anchor}
+          align="end"
+          onClose={() => setAnchor(null)}
+          items={[
+            { label: 'Zoom to fit', trail: 'F', onSelect: () => ctrl.fitAll() },
+            { label: 'Zoom in', trail: '+', onSelect: () => ctrl.zoomBy(1.25) },
+            { label: 'Zoom out', trail: '−', onSelect: () => ctrl.zoomBy(0.8) },
+            'separator',
+            { label: '50%', onSelect: () => ctrl.zoomTo(0.5) },
+            { label: '100%', trail: '1', onSelect: () => ctrl.zoomTo(1) },
+            { label: '200%', onSelect: () => ctrl.zoomTo(2) },
+            'separator',
+            { label: 'Performance overlay', trail: '`', checked: hud, onSelect: () => updatePrefs({ hud: !hud }) },
+          ]}
+        />
+      )}
+    </>
+  );
+}
+
+function BoardToolbar({ tool, ctrl, collectionId }: { tool: Tool; ctrl: BoardController | null; canUndo: boolean; collectionId: string }) {
+  const snap = useStore((s) => s.snap);
+  const scrub = useStore((s) => s.scrubOnHover);
+  const history = useStore((s) => s.history[collectionId]);
+  const set = useCallback((t: Tool) => ctrl?.setTool(t), [ctrl]);
+  return (
+    <div className="board-toolbar float-bar">
+      <IconButton label="Select (V)" pressed={tool === 'select'} onClick={() => set('select')}>
+        <MousePointer2 size={15} />
+      </IconButton>
+      <IconButton label="Hand (H, or hold Space)" pressed={tool === 'hand'} onClick={() => set('hand')}>
+        <Hand size={15} />
+      </IconButton>
+      <IconButton label="Note (N)" pressed={tool === 'note'} onClick={() => set('note')}>
+        <StickyNote size={15} />
+      </IconButton>
+      <span className="sep optional" />
+      <IconButton label="Snap to grid" className="optional" pressed={snap} onClick={() => updatePrefs({ snap: !snap })}>
+        <Grid3x3 size={15} />
+      </IconButton>
+      <IconButton label="Scrub on hover" className="optional" pressed={scrub} onClick={() => updatePrefs({ scrubOnHover: !scrub })}>
+        <ScanEye size={15} />
+      </IconButton>
+      <span className="sep" />
+      <IconButton label="Undo (⌘Z)" disabled={!history?.undo.length} onClick={() => undo(collectionId)}>
+        <Undo2 size={15} />
+      </IconButton>
+      <IconButton label="Redo (⇧⌘Z)" disabled={!history?.redo.length} onClick={() => redo(collectionId)}>
+        <Redo2 size={15} />
+      </IconButton>
+      <span className="sep" />
+      <IconButton label="Fit all (F)" onClick={() => ctrl?.fitAll()}>
+        <Maximize size={15} />
+      </IconButton>
+    </div>
+  );
+}
+
+function SelectionBar({ rect, count, ctrl, collectionId }: { rect: Rect; count: number; ctrl: BoardController; collectionId: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    const pane = el?.parentElement;
+    if (!el || !pane) return;
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    const left = Math.min(Math.max(12, rect.x + rect.w / 2 - w / 2), pane.clientWidth - w - 12);
+    let top = rect.y - h - 14;
+    if (top < 64) top = Math.min(rect.y + rect.h + 14, pane.clientHeight - h - 76);
+    setPos({ left, top });
+  }, [rect]);
+  const hasMany = count > 1;
+  return (
+    <div ref={ref} className="selection-bar float-bar" style={{ left: pos?.left ?? -9999, top: pos?.top ?? -9999 }}>
+      <span className="selection-label">{count} selected</span>
+      {hasMany && (
+        <>
+          <span className="sep" />
+          <IconButton label="Arrange as grid" size="sm" onClick={() => ctrl.arrangeSelection('grid')}>
+            <LayoutGrid size={15} />
+          </IconButton>
+          <IconButton label="Arrange in a row" size="sm" onClick={() => ctrl.arrangeSelection('row')}>
+            <Rows3 size={15} />
+          </IconButton>
+        </>
+      )}
+      <IconButton label="Bring to front" size="sm" onClick={() => ctrl.bringToFront()}>
+        <ArrowUpToLine size={15} />
+      </IconButton>
+      <span className="sep" />
+      <IconButton label="Delete" size="sm" onClick={() => deleteItems(collectionId, useStore.getState().selection)}>
+        <Trash2 size={15} />
+      </IconButton>
+    </div>
+  );
+}

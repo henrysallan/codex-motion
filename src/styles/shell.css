@@ -1,0 +1,334 @@
+/* App frame: the pill bar on the app background, panes as floating cards. */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* Pills centred; global controls on the right. The side columns share the
+   leftover space equally so the centre stays centred. */
+.topbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  height: 46px;
+  padding: 0 8px;
+  flex: none;
+  min-width: 0;
+}
+
+.topbar-center {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: calc(100vw - 180px);
+}
+
+.view-pill {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--pill);
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  flex: none;
+}
+
+.view-pill button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 11px;
+  border-radius: var(--pill);
+  color: var(--text-2);
+  font-weight: 500;
+  transition: background 0.12s, color 0.12s, box-shadow 0.12s;
+}
+
+.view-pill button:hover {
+  color: var(--text);
+}
+
+.view-pill button[aria-pressed='true'] {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+
+.tab-row {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 4px 2px;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 3px 0 12px;
+  border-radius: var(--pill);
+  border: 1px solid transparent;
+  color: var(--text-2);
+  flex: none;
+  transition: background 0.12s, color 0.12s, box-shadow 0.12s;
+}
+
+.tab:hover {
+  background: rgb(255 255 255 / 0.5);
+  color: var(--text);
+}
+
+:root[data-theme='dark'] .tab:hover {
+  background: rgb(255 255 255 / 0.05);
+}
+
+.tab.active {
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: var(--shadow-sm);
+  color: var(--text);
+}
+
+.tab-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  max-width: 200px;
+  font-weight: 500;
+}
+
+.tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-close {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-left: 3px;
+  border-radius: 50%;
+  color: var(--text-3);
+  opacity: 0;
+}
+
+.tab:hover .tab-close,
+.tab.active .tab-close {
+  opacity: 1;
+}
+
+.tab-close:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.target-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 0 3px var(--green-soft);
+  flex: none;
+}
+
+.topbar-end {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.topbar-end .avatar {
+  margin-left: 6px;
+}
+
+.workspace {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: 0 6px 6px;
+}
+
+.workspace.empty {
+  display: grid;
+  margin: 0 6px 6px;
+  border-radius: var(--radius-xl);
+  border: 1px dashed var(--border-strong);
+}
+
+.pane {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.pane-canvas {
+  background: var(--board-bg);
+}
+
+.divider {
+  position: relative;
+  width: 6px;
+  flex: none;
+  cursor: col-resize;
+}
+
+.divider::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 1px;
+  width: 4px;
+  height: 36px;
+  margin-top: -18px;
+  border-radius: 4px;
+  background: var(--border-strong);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.divider:hover::after,
+.resizing .divider::after {
+  opacity: 1;
+}
+
+.resizing,
+.resizing * {
+  cursor: col-resize !important;
+  user-select: none;
+}
+
+/* Pane chrome shared by Collections and Feed. */
+.pane-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px 0;
+}
+
+.pane-head h1 {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+
+.pane-head h1 .count {
+  margin-left: 6px;
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+.pane-head .actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.pane-tabs {
+  padding: 10px 16px 0;
+}
+
+.pane-toolbar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 10px 16px 10px;
+}
+
+/* A GPU view behind DOM content. */
+.surface {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.gpu-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.surface-content {
+  position: absolute;
+  inset: 0 0 auto 0;
+  will-change: transform;
+}
+
+.scrollbar {
+  position: absolute;
+  top: 4px;
+  right: 3px;
+  width: 6px;
+  border-radius: 6px;
+  background: var(--border-strong);
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.surface:hover .scrollbar,
+.scrollbar.active {
+  opacity: 1;
+}
+
+.loading-screen {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--text-3);
+}
+
+/* Narrow panes (three-up on a small window): tighter chrome. */
+.pane {
+  container-type: inline-size;
+}
+
+.workspace {
+  overflow: hidden;
+}
+
+.pane-head .actions,
+.selection-count {
+  white-space: nowrap;
+}
+
+@container (max-width: 380px) {
+  .pane-head {
+    padding: 12px 12px 0;
+  }
+
+  .pane-tabs {
+    padding: 8px 12px 0;
+  }
+
+  .pane-toolbar {
+    padding: 8px 12px;
+  }
+
+  .utabs {
+    gap: 14px;
+  }
+
+  .feed-toolbar:not(:has(.selection-count)) {
+    display: none;
+  }
+}

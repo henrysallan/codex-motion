@@ -1,0 +1,162 @@
+/* Collections pane. Covers are drawn by the GPU behind these cards, so the
+   cover boxes stay transparent and only frame what's underneath. */
+
+.collections {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.collection {
+  position: absolute;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+}
+
+.collection.grid .cover {
+  position: relative;
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px var(--border);
+  transition: box-shadow 0.15s;
+}
+
+.collection.grid:hover .cover {
+  box-shadow: 0 0 0 1px var(--border-strong), 0 6px 18px rgb(0 0 0 / 0.08);
+}
+
+.collection.grid.open .cover {
+  box-shadow: 0 0 0 2px var(--primary);
+}
+
+.cover-empty {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
+  color: var(--text-3);
+}
+
+.target-badge {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  box-shadow: var(--shadow-sm);
+}
+
+.collection .meta {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 1px 0;
+  min-width: 0;
+}
+
+.collection .title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.collection .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 550;
+}
+
+.collection .sub {
+  color: var(--text-2);
+  font-size: 10.5px;
+}
+
+.collection .more {
+  opacity: 0;
+  margin-right: -4px;
+}
+
+.collection:hover .more,
+.collection .more[aria-pressed='true'] {
+  opacity: 1;
+}
+
+.rename {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  margin: -3px 0 -3px -5px;
+  padding: 0 5px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  outline: none;
+  background: var(--surface);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  font-weight: 550;
+}
+
+/* List view: a table, like a database view. */
+.list-head,
+.collection.list {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr) 52px 104px 80px 28px;
+  align-items: center;
+}
+
+.list-head {
+  position: absolute;
+  top: 0;
+  height: 30px;
+  padding-right: 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 10.5px;
+}
+
+.list-head .col-name {
+  grid-column: 2;
+}
+
+.collection.list {
+  padding-right: 8px;
+  border-radius: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.collection.list:hover {
+  background: color-mix(in srgb, var(--surface-hover) 50%, transparent);
+}
+
+.collection.list .thumb {
+  position: absolute;
+  top: 7px;
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.collection.list .col-name {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.col-items,
+.col-updated {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.col-owner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-2);
+}
+
+.surface-empty {
+  position: absolute;
+  inset: 0;
+}

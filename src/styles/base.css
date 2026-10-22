@@ -1,0 +1,68 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--app-bg);
+  color: var(--text);
+  font: 12px/1.45 var(--font);
+  font-feature-settings: 'cv11', 'ss01';
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+#root {
+  height: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+svg {
+  flex: none;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+/* Theme switches shouldn't animate every colour on the page. */
+.theme-switching * {
+  transition: none !important;
+}

@@ -1,0 +1,156 @@
+.feed {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.feed-toolbar {
+  min-height: 46px;
+}
+
+.feed-toolbar .hint {
+  color: var(--text-2);
+  font-size: 10.5px;
+}
+
+.feed-toolbar .hint strong {
+  color: var(--text);
+  font-weight: 550;
+}
+
+.selection-count {
+  font-weight: 550;
+}
+
+.feed-toolbar .add-btn {
+  margin-left: auto;
+  max-width: 60%;
+}
+
+.feed-tile {
+  position: absolute;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: box-shadow 0.12s;
+}
+
+.feed-tile:hover {
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+
+.feed-tile.selected {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.feed-tile .tile-name {
+  position: absolute;
+  left: 5px;
+  bottom: 5px;
+  max-width: calc(100% - 10px);
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgb(0 0 0 / 0.55);
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.12s;
+  pointer-events: none;
+}
+
+.feed-tile:hover .tile-name {
+  opacity: 1;
+}
+
+.added-mark {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.92);
+  color: var(--green);
+  box-shadow: var(--shadow-sm);
+}
+
+.popover-search {
+  margin-bottom: 4px;
+}
+
+.popover-search input {
+  height: 28px;
+}
+
+.drag-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 2000;
+  padding: 4px 10px;
+  border-radius: var(--pill);
+  background: var(--primary);
+  color: var(--text-inverse);
+  font-size: 10.5px;
+  font-weight: 550;
+  box-shadow: var(--shadow-lg);
+  pointer-events: none;
+}
+
+.dragging-clips,
+.dragging-clips * {
+  cursor: grabbing !important;
+}
+
+.toasts {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  z-index: 1500;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  translate: -50% 0;
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 5px 5px 12px;
+  border-radius: var(--pill);
+  background: var(--primary);
+  color: var(--text-inverse);
+  box-shadow: var(--shadow-lg);
+  font-weight: 500;
+  pointer-events: auto;
+  animation: pop-in 0.16s ease-out;
+}
+
+.toast-action {
+  padding: 3px 8px;
+  border-radius: var(--pill);
+  background: rgb(255 255 255 / 0.16);
+  font-weight: 600;
+}
+
+:root[data-theme='dark'] .toast-action {
+  background: rgb(0 0 0 / 0.1);
+}
+
+.toast-close {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  opacity: 0.7;
+}

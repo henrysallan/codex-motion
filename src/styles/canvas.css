@@ -1,0 +1,374 @@
+/* Canvas pane: the board, its floating chrome, notes, focus mode, HUD. */
+
+.board {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  container-type: inline-size;
+}
+
+/* Narrow panes: drop secondary controls rather than overflow. */
+@container (max-width: 560px) {
+  .board-toolbar .optional,
+  .board-count {
+    display: none;
+  }
+
+  .focus-bar .segmented,
+  .focus-bar .focus-duration,
+  .focus-bar .badge {
+    display: none;
+  }
+}
+
+@container (max-width: 400px) {
+  .board-toolbar {
+    max-width: calc(100% - 24px);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+}
+
+.board-host {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  outline: none;
+  cursor: default;
+  touch-action: none;
+}
+
+.board-host[data-tool='hand'],
+.space-held .board-host {
+  cursor: grab;
+}
+
+.board-host.panning {
+  cursor: grabbing !important;
+}
+
+.board-host[data-tool='note'] {
+  cursor: crosshair;
+}
+
+.board-host[data-handle='0'] {
+  cursor: nwse-resize;
+}
+
+.board-host[data-handle='1'] {
+  cursor: nesw-resize;
+}
+
+.board-host.moving {
+  cursor: move;
+}
+
+.board-host.drop-hover::after,
+.file-drag .board-host::after {
+  content: '';
+  position: absolute;
+  inset: 6px;
+  border: 1.5px dashed var(--accent);
+  border-radius: 8px;
+  background: var(--accent-soft);
+  pointer-events: none;
+}
+
+.notes-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
+.note {
+  position: absolute;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+  pointer-events: auto;
+  cursor: default;
+}
+
+.note.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.note.editing {
+  cursor: text;
+  box-shadow: var(--shadow-md);
+}
+
+.note-text {
+  min-height: 1.45em;
+  font-size: 12.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  outline: none;
+  user-select: none;
+}
+
+.note.editing .note-text {
+  user-select: text;
+}
+
+.note-text:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-3);
+}
+
+.board-head {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 100px);
+  min-width: 0;
+  height: 30px;
+  padding: 0 3px 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--pill);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.board-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: text;
+}
+
+.board-rename {
+  margin: 0;
+  width: 220px;
+}
+
+.board-count {
+  color: var(--text-2);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.board-corner {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+.float-bar.small {
+  padding: 2px;
+}
+
+.zoom-btn {
+  min-width: 50px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: var(--pill);
+  font-variant-numeric: tabular-nums;
+  font-weight: 550;
+  font-size: 10.5px;
+}
+
+.zoom-btn:hover {
+  background: var(--surface-hover);
+}
+
+.board-toolbar {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  translate: -50% 0;
+}
+
+.selection-bar {
+  position: absolute;
+  z-index: 5;
+  padding: 3px 4px;
+}
+
+.selection-label {
+  padding: 0 6px 0 8px;
+  font-size: 10.5px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+
+.board-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  pointer-events: none;
+}
+
+.board-empty button {
+  pointer-events: auto;
+}
+
+.file-drop-hint {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
+  padding: 6px 14px;
+  border-radius: var(--pill);
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+/* Focus mode. */
+.focus-bar {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: var(--radius-lg);
+}
+
+.focus-time,
+.focus-duration {
+  min-width: 56px;
+  color: var(--text-2);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.focus-time {
+  color: var(--text);
+  font-weight: 550;
+}
+
+.timeline {
+  position: relative;
+  flex: 1;
+  min-width: 80px;
+  height: 26px;
+  cursor: pointer;
+}
+
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 11px;
+  height: 4px;
+  border-radius: 4px;
+  background: var(--surface-3);
+}
+
+.timeline-range {
+  position: absolute;
+  top: 11px;
+  height: 4px;
+  border-radius: 4px;
+  background: var(--green);
+  opacity: 0.85;
+}
+
+.timeline-handle {
+  position: absolute;
+  top: 6px;
+  width: 5px;
+  height: 14px;
+  margin-left: -2.5px;
+  border-radius: 2px;
+  background: var(--surface);
+  border: 1.5px solid var(--green);
+  box-shadow: var(--shadow-xs);
+  cursor: ew-resize;
+}
+
+.timeline-head {
+  position: absolute;
+  top: 3px;
+  width: 2px;
+  height: 20px;
+  margin-left: -1px;
+  border-radius: 2px;
+  background: var(--text);
+  pointer-events: none;
+}
+
+/* Performance overlay. */
+.hud {
+  position: absolute;
+  left: 8px;
+  top: 46px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 280px;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  font-size: 10.5px;
+}
+
+.hud header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hud header button {
+  margin-left: auto;
+}
+
+.hud pre {
+  margin: 0;
+  font: 10px/1.55 var(--mono);
+  color: var(--text-2);
+  white-space: pre;
+  overflow: hidden;
+}
+
+.hud-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-2);
+}
+
+.hud-row input[type='range'] {
+  flex: 1;
+}
+
+.hud-gpu {
+  color: var(--text-3);
+  font-size: 10px;
+}
+
+.hud-report {
+  max-height: 260px;
+  overflow: auto !important;
+  padding: 8px;
+  border-radius: 8px;
+  border-left: 3px solid var(--red);
+  background: var(--surface-2);
+  font-size: 9.5px !important;
+  cursor: pointer;
+}
+
+.hud-report.pass {
+  border-left-color: var(--green);
+}
