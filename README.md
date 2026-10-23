@@ -167,8 +167,14 @@ store (IndexedDB) + undo            scheduler: one decoder budget       encode L
 - **Level of detail.** Each clip has an L0 sprite (24 frames, 128 px tall, BC1,
   about 100 KB), a 480p L1 and a 1080p L2 (H.264, 1 s closed GOP, no B-frames).
   The scheduler picks a tier from each clip's on-screen height, ranks clips by
-  visible area, and grants L1/L2 decoders until the budget runs out. L0 is
-  always resident, so a tile is never blank.
+  visible area, and grants L1/L2 decoders until the budget runs out. On a
+  board, L0 is always resident, so a tile is never blank.
+- **Sprite residency.** The L0 atlas is a cache: each layer is cut into
+  fixed one-frame cells per frame width, so any sprite can be evicted and its
+  cells reused. Scrolling panes (Feed, Collections) load sprites only for
+  clips within two viewports of what is visible, nearest first; past
+  256 BC1 layers (512 MB) the least recently used sprites that no board or
+  nearby tile needs make room, and reload from OPFS when wanted again.
 - **One clock.** Every clip's frame derives from the board time, in a
   "virtual" timeline where loop *k* of a clip of length *D* covers
   [*kD*, (*k*+1)*D*). Decoders loop forever without resets, L0 and video show
@@ -184,7 +190,8 @@ store (IndexedDB) + undo            scheduler: one decoder budget       encode L
   every pane's canvas, so UI work never costs the board a frame. Panes that
   scroll (Collections, Feed) scroll virtually: one number drives both the DOM
   chrome and the GPU camera in the same frame, so covers don't swim under
-  their labels.
+  their labels. The Feed mounts tiles, and sends the engine items, only near
+  the viewport.
 
 Code map: `src/engine/` (render worker), `src/ingest/` (ingest worker),
 `src/app/` (React UI: `store.ts`, `Workspace.tsx`, `collections/`, `feed/`,

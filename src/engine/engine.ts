@@ -3,10 +3,11 @@
 // refresh.
 //
 // Per frame: advance the clocks, place every item of every view on screen
-// (in double precision, on the CPU), let the scheduler assign tiers within
-// one shared decoder budget, start/stop/crossfade video layers to match,
-// then draw each view: one instanced call for all L0 tiles, one quad per
-// decoded video frame, then overlay rects.
+// (in double precision, on the CPU), keep the sprites those items need
+// resident, let the scheduler assign tiers within one shared decoder budget,
+// start/stop/crossfade video layers to match, then draw each view: one
+// instanced call for all L0 tiles, one quad per decoded video frame, then
+// overlay rects.
 //
 // Streams are shared: one decoder per (source, range, clock), however many
 // tiles in however many views show it. A tile's video "layers" each point at
@@ -26,6 +27,7 @@ import type {
   RGBA,
   ToWorker,
   ViewItem,
+  ViewKind,
   ViewStyle,
 } from './protocol.ts';
 import { OVERLAY_FLOATS, Renderer, TILE_FLOATS, type VideoDraw, type ViewTarget } from './renderer.ts';
@@ -39,6 +41,9 @@ const MEDIA_CACHE_BYTES = 384 * 1024 * 1024;
 // ahead (seconds) to lead a pan.
 const PREFETCH_MARGIN = 0.15;
 const PREFETCH_LEAD_S = 0.35;
+// A scrolling view keeps sprites resident for items within this many
+// viewports of its visible area (boards keep every item's).
+const RESIDENT_VIEWPORTS = 2;
 const STATS_INTERVAL_MS = 250;
 const MAX_RECORD_FRAMES = 60 * 120;
 // Streams beyond the budget that may linger while crossfading out.
@@ -67,6 +72,7 @@ type Post = (msg: FromWorker) => void;
 
 interface View {
   id: number;
+  kind: ViewKind;
   canvas: OffscreenCanvas;
   context: GPUCanvasContext;
   target: ViewTarget;
@@ -176,6 +182,8 @@ export class Engine {
   private readonly cpuTimes: number[] = [];
   private readonly lateWindow: [number, number][] = [];
   private lastStatsAt = 0;
+  // Visible items drawn without their sprite, last frame.
+  private missingSprites = 0;
   private recording: FrameRecord[] | null = null;
   private shownTiers: [number, number, number] = [0, 0, 0];
   private videoDraws = 0;
@@ -189,7 +197,7 @@ export class Engine {
     this.budget = this.settings.decoderBudget;
     this.atlas = new SpriteAtlas(device, bc, maxLayers);
     this.renderer = new Renderer(device, this.format, this.atlas);
-    this.sprites = new SpriteLoader(this.atlas, () => {});
+    this.sprites = new SpriteLoader(this.atlas);
     requestAnimationFrame(this.tick);
   }
 
@@ -272,6 +280,7 @@ export class Engine {
     msg.canvas.height = msg.height;
     this.views.set(msg.id, {
       id: msg.id,
+      kind: msg.kind,
       canvas: msg.canvas,
       context,
       target: this.renderer.createTarget(),
@@ -314,7 +323,6 @@ export class Engine {
         }
       }
     }
-    this.requestSprites();
   }
 
   private setItems(view: View, items: ViewItem[]): void {
@@ -357,7 +365,6 @@ export class Engine {
     }
     view.items = next;
     view.byId = byId;
-    this.requestSprites();
   }
 
   // Recomputes an item's range and stream keys after its data, asset or
@@ -432,19 +439,37 @@ export class Engine {
     }
   }
 
-  // Loads sprites for every item in every view, visible ones first.
-  private requestSprites(): void {
-    const order: { asset: Asset; d: number }[] = [];
+  // Keeps the sprites items need resident: every item of a board, and the
+  // items of a scrolling view within RESIDENT_VIEWPORTS of its visible area.
+  // Touching a sprite each frame keeps it from being evicted; missing ones
+  // are queued visible first, then nearest. Runs after layout, on slots.
+  private updateSprites(): void {
+    this.atlas.tick();
+    const missing: { asset: Asset; d: number }[] = [];
     for (const v of this.views.values()) {
-      const cx = v.camera.x + v.width / v.dpr / v.camera.zoom / 2;
-      const cy = v.camera.y + v.height / v.dpr / v.camera.zoom / 2;
+      const { width: W, height: H } = v;
+      const reachX = v.kind === 'board' ? Infinity : W * RESIDENT_VIEWPORTS;
+      const reachY = v.kind === 'board' ? Infinity : H * RESIDENT_VIEWPORTS;
       for (const it of v.items) {
-        const p = it.data;
-        order.push({ asset: it.asset, d: Math.hypot(p.x + p.w / 2 - cx, p.y + p.h / 2 - cy) * v.camera.zoom });
+        const s = it.slot;
+        // Distance outside the viewport, device px; 0 when visible.
+        const dx = Math.max(0, -(s.x + s.w), s.x - W);
+        const dy = Math.max(0, -(s.y + s.h), s.y - H);
+        if (dx > reachX || dy > reachY) continue;
+        const a = it.asset;
+        const entry = this.atlas.get(a.id);
+        if (entry) this.atlas.touch(entry);
+        else if (a.l0 && !this.sprites.failed.has(a.id) && !this.sprites.isLoading(a.id)) {
+          // Visible ones (0) first, then nearest; the centre breaks ties.
+          const centre = Math.hypot(s.x + s.w / 2 - W / 2, s.y + s.h / 2 - H / 2);
+          missing.push({ asset: a, d: Math.hypot(dx, dy) + centre * 0.01 });
+        }
       }
     }
-    order.sort((a, b) => a.d - b.d);
-    this.sprites.request(order.map((o) => o.asset));
+    if (missing.length === 0 && !this.sprites.queued) return;
+    missing.sort((a, b) => a.d - b.d);
+    const seen = new Set<string>();
+    this.sprites.want(missing.filter((m) => !seen.has(m.asset.id) && seen.add(m.asset.id)).map((m) => m.asset));
   }
 
   // ---- time ----------------------------------------------------------------
@@ -522,18 +547,22 @@ export class Engine {
       }
       this.layoutView(v, slots);
     }
+    this.updateSprites();
     plan(slots, this.settings, this.budget, this.assignment);
     this.syncLayers(now, dt);
 
     let videoDraws = 0;
     let lateDraws = 0;
+    let missing = 0;
     const tiers: [number, number, number] = [0, 0, 0];
     for (const v of this.views.values()) {
       const r = this.drawView(v, tiers);
       videoDraws += r.videos;
       lateDraws += r.late;
+      missing += r.missing;
     }
     this.shownTiers = tiers;
+    this.missingSprites = missing;
     this.videoDraws = videoDraws;
     this.lateDraws = lateDraws;
 
@@ -668,11 +697,12 @@ export class Engine {
 
   // ---- drawing -------------------------------------------------------------
 
-  private drawView(v: View, tiers: [number, number, number]): { videos: number; late: number } {
+  private drawView(v: View, tiers: [number, number, number]): { videos: number; late: number; missing: number } {
     const items = v.items;
     if (this.tileData.length < items.length * TILE_FLOATS) this.tileData = new Float32Array(items.length * TILE_FLOATS * 2);
     const td = this.tileData;
     let n = 0;
+    let missing = 0;
     for (const it of items) {
       const s = it.slot;
       if (!s.visible) continue;
@@ -681,23 +711,22 @@ export class Engine {
       td[o + 1] = s.y;
       td[o + 2] = s.w;
       td[o + 3] = s.h;
-      const entry = this.sprites.entries.get(it.asset.id);
+      const entry = this.atlas.get(it.asset.id);
       if (entry) {
         const loop = it.rangeOut - it.rangeIn;
         const local = ((this.itemTarget(it) % loop) + loop) % loop;
         const source = (it.rangeIn + local) / (it.asset.duration * 1e6);
-        const frame = Math.min(entry.frameCount - 1, Math.max(0, Math.floor(source * entry.frameCount)));
-        const fx = entry.x + (frame % entry.cols) * entry.frameWidth;
-        const fy = entry.y + Math.floor(frame / entry.cols) * entry.frameHeight;
+        const f = entry.frames[Math.min(entry.frameCount - 1, Math.max(0, Math.floor(source * entry.frameCount)))];
         const [u0, v0, u1, v1] = it.data.crop ?? FULL_FRAME;
-        td[o + 4] = (fx + u0 * entry.frameWidth) / ATLAS_SIZE;
-        td[o + 5] = (fy + v0 * entry.frameHeight) / ATLAS_SIZE;
-        td[o + 6] = (fx + u1 * entry.frameWidth) / ATLAS_SIZE;
-        td[o + 7] = (fy + v1 * entry.frameHeight) / ATLAS_SIZE;
-        td[o + 8] = entry.layer;
+        td[o + 4] = (f.x + u0 * entry.frameWidth) / ATLAS_SIZE;
+        td[o + 5] = (f.y + v0 * entry.frameHeight) / ATLAS_SIZE;
+        td[o + 6] = (f.x + u1 * entry.frameWidth) / ATLAS_SIZE;
+        td[o + 7] = (f.y + v1 * entry.frameHeight) / ATLAS_SIZE;
+        td[o + 8] = f.layer;
       } else {
         td[o + 4] = td[o + 5] = td[o + 6] = td[o + 7] = 0;
         td[o + 8] = -1;
+        if (it.asset.l0 && !this.sprites.failed.has(it.asset.id)) missing++;
       }
       td[o + 9] = it.depth;
       td[o + 10] = it.data.dim ?? 1;
@@ -756,7 +785,7 @@ export class Engine {
       this.overlayData,
       overlayCount,
     );
-    return { videos: videoDraws, late: lateDraws };
+    return { videos: videoDraws, late: lateDraws, missing };
   }
 
   // Converts the view's overlay rects (and tier outlines when on) to device
@@ -845,6 +874,8 @@ export class Engine {
     }
     const assetIds = new Set<string>();
     for (const v of this.views.values()) for (const it of v.items) assetIds.add(it.asset.id);
+    let resident = 0;
+    for (const id of assetIds) if (this.atlas.get(id)) resident++;
     return {
       fps: 1000 / mean,
       refreshHz: 1000 / refresh,
@@ -861,10 +892,17 @@ export class Engine {
       streamsWaiting: waiting,
       lateRatio: this.lateRatio(),
       failed: this.failures,
-      l0Resident: [...assetIds].filter((id) => this.sprites.entries.has(id)).length,
+      l0Resident: resident,
       l0Total: assetIds.size,
+      l0Missing: this.missingSprites,
+      l0Cached: this.atlas.resident,
+      l0Pending: this.sprites.pending,
+      l0Evictions: this.atlas.evictions,
       l0Bytes: this.atlas.bytesAllocated,
+      l0BytesUsed: this.atlas.bytesUsed,
       atlasLayers: this.atlas.layers,
+      atlasLayersUsed: this.atlas.layersInUse,
+      atlasCap: this.atlas.softCap,
       atlasFormat: this.atlas.format,
       boardTime: this.boardTimeMs / 1000,
       paused: this.paused,

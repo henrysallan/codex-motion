@@ -184,6 +184,21 @@ export interface Workspace {
   notes: Note[];
 }
 
+// Pulls every asset row at startup, 1,000 per request, source and analysis
+// JSON included (about 1.7 KB a row). Fine to ~10k rows. Past that the Feed
+// should page, which needs:
+// - Startup to load only the user's uploads and the assets their placements
+//   use (byIds); the Feed's pool loads on its own.
+// - The Feed's order from the server. Its seeded shuffle needs every id on
+//   the client today; instead order by a hash of (id, seed), keyset-paged
+//   (an RPC like feed_page(seed, after, limit)).
+// - A skeleton of the whole ordered pool (id, width, height: tens of bytes a
+//   row) so justified rows lay out and the scrollbar is right from the
+//   start, then full rows for the index range near the viewport, which
+//   FeedPane already computes for the engine (ENGINE_OVERSCAN).
+// - Narrow columns for tiles, with source and analysis fetched on demand.
+// - "Hide added" as a server-side not-exists against the user's placements,
+//   and the header count from a head request.
 export async function fetchWorkspace(userId: string): Promise<Workspace> {
   const [profile, assets, collections] = await Promise.all([
     supabase!.from('profiles').select('*').eq('id', userId).maybeSingle(),
