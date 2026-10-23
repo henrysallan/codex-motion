@@ -19,6 +19,8 @@ async function resolve(path: string, create: boolean): Promise<FileSystemFileHan
 
 async function readOpfs(path: string): Promise<ArrayBuffer> {
   const file = await (await resolve(path, false)).getFile();
+  // A write in progress shows as an empty file until it commits.
+  if (file.size === 0) throw new Error(`${path}: empty`);
   return file.arrayBuffer();
 }
 

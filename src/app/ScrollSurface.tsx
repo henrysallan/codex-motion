@@ -6,10 +6,23 @@
 // native scroll container would scroll the DOM on the compositor while the
 // GPU view followed a frame or two later, so covers would swim under their
 // labels.
+//
+// A pane with thousands of clips (the Feed) virtualises: `onWindow` reports
+// the visible band, rounded out to half-viewport steps so it changes only
+// every half viewport of scrolling, and the pane mounts tiles and sends the
+// engine items only near it.
 
 import { type ReactNode, type RefObject, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import type { OverlayRect, ViewItem } from '../engine/protocol.ts';
 import { useEngineView } from './engine.ts';
+
+// Content-space band covering at least the visible area.
+export interface ScrollWindow {
+  top: number;
+  bottom: number;
+  // Viewport height.
+  height: number;
+}
 
 export interface SurfaceHandle {
   scrollTop: number;
@@ -23,6 +36,7 @@ export function ScrollSurface({
   contentHeight,
   overlay,
   onResize,
+  onWindow,
   handle,
   children,
   className = '',
@@ -32,6 +46,7 @@ export function ScrollSurface({
   contentHeight: number;
   overlay?: OverlayRect[];
   onResize: (width: number, height: number) => void;
+  onWindow?: (window: ScrollWindow) => void;
   handle?: RefObject<SurfaceHandle | null>;
   children: ReactNode;
   className?: string;
@@ -45,6 +60,9 @@ export function ScrollSurface({
   const view = useEngineView(host, 'panel');
   const contentHeightRef = useRef(contentHeight);
   contentHeightRef.current = contentHeight;
+  const onWindowRef = useRef(onWindow);
+  onWindowRef.current = onWindow;
+  const windowRef = useRef<ScrollWindow | null>(null);
 
   const apply = useCallback(() => {
     const h = viewport.current;
@@ -53,6 +71,13 @@ export function ScrollSurface({
     scroll.current = Math.min(max, Math.max(0, scroll.current));
     if (content.current) content.current.style.transform = `translate3d(0, ${-scroll.current}px, 0)`;
     view?.setCamera({ x: 0, y: scroll.current, zoom: 1 });
+    const step = Math.max(64, h / 2);
+    const top = Math.floor(scroll.current / step) * step;
+    const w = windowRef.current;
+    if (!w || w.top !== top || w.height !== h) {
+      windowRef.current = { top, bottom: top + step + h, height: h };
+      onWindowRef.current?.(windowRef.current);
+    }
     const t = thumb.current;
     if (t) {
       const size = max > 0 ? Math.max(32, (h / total) * (h - 8)) : 0;
@@ -120,6 +145,22 @@ export function ScrollSurface({
       <div className="scrollbar" ref={thumb} />
     </div>
   );
+}
+
+// The run of `boxes` (sorted top to bottom, as rows are) that overlaps
+// [top, bottom): start and end indices.
+export function rowsInBand(boxes: { y: number; h: number }[], top: number, bottom: number): [number, number] {
+  const first = (pred: (b: { y: number; h: number }) => boolean) => {
+    let lo = 0;
+    let hi = boxes.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (pred(boxes[mid])) hi = mid;
+      else lo = mid + 1;
+    }
+    return lo;
+  };
+  return [first((b) => b.y + b.h > top), first((b) => b.y >= bottom)];
 }
 
 // Crop that makes a clip of `aspect` fill a box of `boxAspect` (CSS

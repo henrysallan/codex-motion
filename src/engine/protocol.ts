@@ -31,6 +31,13 @@ export interface ViewItem {
   crop?: [number, number, number, number];
 }
 
+// How a view keeps sprites resident. A board keeps every clip's L0 sprite
+// loaded, so no tile is ever blank. A scrolling pane (the Feed, collection
+// covers) may hold thousands of clips; it loads sprites only for clips
+// within a couple of viewports of what is visible, and the rest can be
+// evicted.
+export type ViewKind = 'board' | 'scroll';
+
 // screen = (world - (x, y)) * zoom, in CSS px.
 export interface CameraState {
   x: number;
@@ -103,7 +110,7 @@ export interface FocusState {
 export type ToWorker =
   | { type: 'init'; settings: EngineSettings }
   | { type: 'assets'; assets: Asset[] }
-  | { type: 'view'; id: number; canvas: OffscreenCanvas; width: number; height: number; dpr: number; style: ViewStyle }
+  | { type: 'view'; id: number; kind: ViewKind; canvas: OffscreenCanvas; width: number; height: number; dpr: number; style: ViewStyle }
   | { type: 'view:remove'; id: number }
   | { type: 'view:resize'; id: number; width: number; height: number; dpr: number }
   | { type: 'view:style'; id: number; style: ViewStyle }
@@ -138,10 +145,23 @@ export interface EngineStats {
   // Share of video tiles drawn with a stale frame (decoder behind), last window.
   lateRatio: number;
   failed: number;
+  // Clips in views whose sprite is resident, of all clips in views.
   l0Resident: number;
   l0Total: number;
+  // Visible clips drawn without their sprite (still loading), last frame.
+  l0Missing: number;
+  // Sprites in the atlas (including idle ones kept as a cache), sprites
+  // waiting to load, and evictions so far.
+  l0Cached: number;
+  l0Pending: number;
+  l0Evictions: number;
+  // Atlas texture size, and the part holding frames.
   l0Bytes: number;
+  l0BytesUsed: number;
   atlasLayers: number;
+  atlasLayersUsed: number;
+  // Layers eviction keeps the atlas within.
+  atlasCap: number;
   atlasFormat: string;
   boardTime: number;
   paused: boolean;

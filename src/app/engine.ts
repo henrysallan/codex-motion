@@ -39,7 +39,9 @@ useStore.subscribe((s) => {
 
 // Gives a pane a GPU view: creates a canvas inside `host` (a fresh one per
 // mount, since a canvas can only be handed to the worker once), keeps its
-// colours in step with the theme, and tears it down on unmount.
+// colours in step with the theme, and tears it down on unmount. A board
+// keeps every clip's sprite loaded; a panel scrolls, and loads sprites only
+// near its viewport.
 export function useEngineView(host: React.RefObject<HTMLElement | null>, surface: Surface, radius?: number): EngineView | null {
   const theme = useResolvedTheme();
   const [view, setView] = useState<EngineView | null>(null);
@@ -53,7 +55,7 @@ export function useEngineView(host: React.RefObject<HTMLElement | null>, surface
     canvas.className = 'gpu-canvas';
     el.prepend(canvas);
     const s = styleRef.current;
-    const v = engine.createView(canvas, viewStyle(s.theme, s.surface, s.radius));
+    const v = engine.createView(canvas, s.surface === 'board' ? 'board' : 'scroll', viewStyle(s.theme, s.surface, s.radius));
     setView(v);
     return () => {
       v.destroy();
