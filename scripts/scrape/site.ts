@@ -128,6 +128,11 @@ export function parseRobots(text: string): Robots {
       agents.push(value.toLowerCase());
       continue;
     }
+    // A crawl-delay before any group applies to everyone.
+    if (field === 'crawl-delay' && !agents.length) {
+      crawlDelay ??= Number(value) || undefined;
+      continue;
+    }
     inRules = true;
     if (!agents.includes('*')) continue;
     if (field === 'crawl-delay') crawlDelay = Number(value) || undefined;

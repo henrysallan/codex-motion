@@ -133,6 +133,10 @@ test('page metadata and render signals', () => {
   assert.equal(wantsRender(lazy.signals, 0), true);
 });
 
+test('robots.txt: a crawl-delay above every group applies to all', () => {
+  assert.equal(parseRobots('Crawl-delay: 10\nUser-agent: *\nDisallow:\n').crawlDelay, 10);
+});
+
 test('robots.txt: longest match wins, Allow breaks ties', () => {
   const r = parseRobots(`User-agent: Googlebot\nDisallow: /\n\nUser-agent: *\nDisallow: /private\nAllow: /private/press\nDisallow: /*.json$\nCrawl-delay: 2\nSitemap: https://studio.example/sitemap.xml`);
   assert.equal(r.allowed('https://studio.example/work'), true);
