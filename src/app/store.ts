@@ -8,10 +8,11 @@
 
 import { create } from 'zustand';
 import * as db from '../data/db.ts';
-import { type AssetRecord, type Collection, newId, type Note, type Placement, type Point, type User } from '../data/model.ts';
+import { type AssetRecord, type Collection, DEFAULT_FORMAT, newId, type Note, type NoteFormat, type Placement, type Point, type User } from '../data/model.ts';
 import * as remote from '../data/remote.ts';
 import { enqueue } from '../data/sync.ts';
 import type { Library } from '../media/library.ts';
+import { emptyQuery, type SearchQuery } from '../search/engine.ts';
 import { justifiedRows } from './layout/arrange.ts';
 import { type Box, placeIncoming } from './layout/relax.ts';
 
@@ -28,6 +29,10 @@ interface Prefs {
   collectionsSort: CollectionsSort;
   feedSeed: number;
   feedHideAdded: boolean;
+  // The Feed's search: text, facet filters, similar-to seeds, fuzziness, sort.
+  feedQuery: SearchQuery;
+  // Whether the search's filter panel is open.
+  feedSearchOpen: boolean;
   snap: boolean;
   scrubOnHover: boolean;
   hud: boolean;
@@ -83,6 +88,8 @@ const defaultPrefs: Prefs = {
   collectionsSort: 'updated',
   feedSeed: 1,
   feedHideAdded: false,
+  feedQuery: emptyQuery(),
+  feedSearchOpen: false,
   snap: false,
   scrubOnHover: true,
   hud: false,
@@ -96,7 +103,7 @@ function loadPrefs(): Prefs {
     const saved = JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}') as Partial<Prefs> & { version?: number };
     // v2: snapping off by default.
     if ((saved.version ?? 1) < 2) delete saved.snap;
-    return { ...defaultPrefs, ...saved };
+    return { ...defaultPrefs, ...saved, feedQuery: { ...emptyQuery(), ...saved.feedQuery } };
   } catch {
     return defaultPrefs;
   }
@@ -409,6 +416,21 @@ export function updatePrefs(p: Partial<Prefs>): void {
   set(p);
 }
 
+export function setFeedQuery(patch: Partial<SearchQuery>): void {
+  set({ feedQuery: { ...get().feedQuery, ...patch } });
+}
+
+// Shows the Feed narrowed to a search, e.g. every clip for a client:
+// searchFeed({ filters: { client: ['Nike'] } }). Starts from a clean search
+// but keeps the user's fuzziness and sort.
+export function searchFeed(patch: Partial<Pick<SearchQuery, 'text' | 'filters' | 'similar'>>): void {
+  const { feedQuery, panes } = get();
+  set({
+    feedQuery: { ...emptyQuery(), fuzziness: feedQuery.fuzziness, sort: feedQuery.sort, ...patch },
+    panes: { ...panes, feed: true },
+  });
+}
+
 // ---- collections ---------------------------------------------------------------
 
 export function createCollection(name = 'Untitled collection'): string {
@@ -590,7 +612,7 @@ export function addToCollection(collectionId: string, assetIds: string[], at?: P
   const c = s.collections[collectionId];
   if (!c || assetIds.length === 0) return [];
   const existing = placementsOf(collectionId);
-  const boxes: Box[] = [...existing, ...notesOf(collectionId).map((n) => ({ x: n.x, y: n.y, w: n.w, h: 120 }))];
+  const boxes: Box[] = [...existing, ...notesOf(collectionId).map((n) => ({ x: n.x, y: n.y, w: n.w, h: n.h ?? 120 }))];
   let drop = at ?? c.lastDrop;
   if (!drop) {
     // First items in a collection: the origin; later batches go below.
@@ -611,16 +633,49 @@ export function addToCollection(collectionId: string, assetIds: string[], at?: P
   return next;
 }
 
-export function addNote(collectionId: string, at: Point): Note {
-  const n: Note = { id: newId(), collectionId, x: at.x, y: at.y, w: 240, text: '', z: topZ(collectionId) + 1 };
+// Default width of a text box placed with a click, in world units.
+const NEW_NOTE_W = 240;
+
+// Adds an empty text box at `at`; a size makes it that big (a dragged-out
+// box), otherwise it's a default width and as tall as its text.
+export function addNote(collectionId: string, at: Point, size?: { w: number; h: number }): Note {
+  const n: Note = {
+    ...DEFAULT_FORMAT,
+    id: newId(),
+    collectionId,
+    x: at.x,
+    y: at.y,
+    w: size?.w ?? NEW_NOTE_W,
+    h: size?.h ?? null,
+    text: '',
+    z: topZ(collectionId) + 1,
+  };
   commit(collectionId, { placements: [], notes: [[null, n]] });
   return n;
 }
 
 export function saveNote(note: Note): void {
   const prev = get().notes[note.id];
-  if (prev && prev.text === note.text && prev.x === note.x && prev.y === note.y && prev.w === note.w) return;
+  if (prev && (Object.keys(note) as (keyof Note)[]).every((k) => prev[k] === note[k])) return;
   commit(note.collectionId, { placements: [], notes: [[prev ?? null, note]] });
+}
+
+// Turns a style on for all the text boxes, or off if they all have it.
+export function toggleNoteFormat(collectionId: string, ids: string[], key: 'bold' | 'italic' | 'underline'): void {
+  const notes = get().notes;
+  const on = ids.every((id) => notes[id]?.[key]);
+  formatNotes(collectionId, ids, { [key]: !on });
+}
+
+// Applies formatting to text boxes as one undo step.
+export function formatNotes(collectionId: string, ids: string[], format: Partial<NoteFormat>): void {
+  const s = get();
+  const pairs: [Note, Note][] = [];
+  for (const id of ids) {
+    const n = s.notes[id];
+    if (n) pairs.push([n, { ...n, ...format }]);
+  }
+  commit(collectionId, { placements: [], notes: pairs });
 }
 
 // ---- assets --------------------------------------------------------------------

@@ -27,14 +27,21 @@ export function Popover({
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const r = anchor instanceof HTMLElement ? anchor.getBoundingClientRect() : { left: anchor.x, right: anchor.x, top: anchor.y, bottom: anchor.y };
-    const w = el.offsetWidth;
-    const h = el.offsetHeight;
-    let left = align === 'end' ? r.right - w : r.left;
-    let top = r.bottom + 6;
-    if (top + h > innerHeight - 8) top = Math.max(8, r.top - h - 6);
-    left = Math.min(Math.max(8, left), innerWidth - w - 8);
-    setPos({ left, top });
+    const place = () => {
+      const r = anchor instanceof HTMLElement ? anchor.getBoundingClientRect() : { left: anchor.x, right: anchor.x, top: anchor.y, bottom: anchor.y };
+      const w = el.offsetWidth;
+      const h = el.offsetHeight;
+      let left = align === 'end' ? r.right - w : r.left;
+      let top = r.bottom + 6;
+      if (top + h > innerHeight - 8) top = Math.max(8, r.top - h - 6);
+      left = Math.min(Math.max(8, left), innerWidth - w - 8);
+      setPos({ left, top });
+    };
+    place();
+    // Content that loads after opening can change the size.
+    const ro = new ResizeObserver(place);
+    ro.observe(el);
+    return () => ro.disconnect();
   }, [anchor, align]);
 
   useEffect(() => {

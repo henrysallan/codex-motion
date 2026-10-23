@@ -1,28 +1,37 @@
 // The Canvas pane: the active collection's board. The BoardController does
 // the interaction work; this component wires it to React chrome: header,
-// toolbar, selection bar, focus bar, notes, menus and the HUD.
+// toolbar, selection bar, focus bar and info panel, notes, menus and the HUD.
 
 import {
   ArrowDownToLine,
   ArrowUpToLine,
+  Bold,
   Crosshair,
   Globe,
   Grid3x3,
   Hand,
+  Heading1,
+  Heading2,
+  Heading3,
   Image as ImageIcon,
+  Italic,
   LayoutGrid,
   Maximize,
   MousePointer2,
+  Pencil,
+  Pilcrow,
   Redo2,
   Rows3,
   ScanEye,
   Sparkles,
-  StickyNote,
   Trash2,
+  Type,
+  Underline,
   Undo2,
   Upload,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Note, TextSize } from '../../data/model.ts';
 import type { CameraState } from '../../engine/protocol.ts';
 import { Button, EmptyState, IconButton } from '../../ui/controls.tsx';
 import { Menu, type MenuEntry } from '../../ui/popover.tsx';
@@ -32,21 +41,28 @@ import { plural } from '../format.ts';
 import { ingestFiles } from '../ingest.ts';
 import {
   deleteItems,
+  formatNotes,
   notesOf,
   redo,
   renameCollection,
   setActiveTarget,
   setCover,
+  toggleNoteFormat,
   togglePane,
   undo,
   updatePrefs,
   useStore,
 } from '../store.ts';
 import { useResolvedTheme } from '../theme.ts';
+import { InfoPanel } from '../detail/InfoPanel.tsx';
+import { INFO_MAX, INFO_SHARE, useDetail } from '../detail/state.ts';
 import { BoardController, type Tool } from './BoardController.ts';
 import { FocusBar } from './FocusBar.tsx';
 import { Hud } from './Hud.tsx';
 import { SharePopover } from '../SharePopover.tsx';
+import { remoteEnabled } from '../../config.ts';
+import { CommentsLayer, CommentToolButton, ViewerToolbar } from '../comments/CommentsLayer.tsx';
+import { commentAt } from '../comments/state.ts';
 import { NotesLayer } from './NotesLayer.tsx';
 import { boardRegistry } from './registry.ts';
 
@@ -71,6 +87,11 @@ export function CanvasPane({ collectionId }: { collectionId: string }) {
   const noteCount = useStore((s) => notesOf(collectionId, s.notes).length);
   const selection = useStore((s) => s.selection);
   const focus = useStore((s) => (s.focus?.collectionId === collectionId ? s.focus : null));
+  const focusAsset = useStore((s) => {
+    const p = focus && s.placements[focus.placementId];
+    return p ? s.assets[p.assetId] : undefined;
+  });
+  const infoPanel = useDetail((s) => s.infoPanel);
   const hud = useStore((s) => s.hud);
   const feedOpen = useStore((s) => s.panes.feed);
   const readonly = useStore((s) => s.mode === 'public');
@@ -84,6 +105,7 @@ export function CanvasPane({ collectionId }: { collectionId: string }) {
       onTool: setTool,
       onContextMenu: (x, y, hit) => setMenu({ x, y, hit }),
       onEditNote: setEditing,
+      ...(remoteEnabled ? { onComment: (sx: number, sy: number, x: number, y: number) => commentAt(collectionId, c.commentSpotAt(sx, sy), { x, y }) } : {}),
     }, readonly);
     setCtrl(c);
     boardRegistry.current = c;
@@ -126,7 +148,10 @@ export function CanvasPane({ collectionId }: { collectionId: string }) {
     const placement = menu.hit ? ctrl.placementById(menu.hit) : undefined;
     if (menu.hit) {
       const multi = selection.length > 1;
+      const notes = useStore.getState().notes;
+      const noteIds = selection.filter((id) => notes[id]);
       return [
+        ...(noteIds.length ? textMenu(collectionId, noteIds.map((id) => notes[id]), () => ctrl.editNote(noteIds[0])) : []),
         ...(placement
           ? [
               { label: 'Focus', icon: <ScanEye size={15} />, trail: 'Double-click', onSelect: () => ctrl.enterFocus(placement.id) },
@@ -148,12 +173,7 @@ export function CanvasPane({ collectionId }: { collectionId: string }) {
       ];
     }
     return [
-      {
-        label: 'Add note here',
-        icon: <StickyNote size={15} />,
-        trail: 'N',
-        onSelect: () => ctrl.placeNoteAtClient(menu.x, menu.y),
-      },
+      { label: 'Add text here', icon: <Type size={15} />, trail: 'T', onSelect: () => ctrl.placeNoteAtClient(menu.x, menu.y) },
       { label: 'Fit all', icon: <Maximize size={15} />, trail: 'F', onSelect: () => ctrl.fitAll() },
     ];
   }, [menu, ctrl, selection, collectionId]);
@@ -166,6 +186,7 @@ export function CanvasPane({ collectionId }: { collectionId: string }) {
       <div className="board-host" ref={host} tabIndex={0} data-tool={tool} data-readonly={readonly || undefined}>
         <div className="notes-layer" ref={notesRef}>
           <NotesLayer collectionId={collectionId} ctrl={ctrl} editing={readonly ? null : editing} setEditing={readonly ? () => {} : setEditing} />
+          {remoteEnabled && <CommentsLayer collectionId={collectionId} tool={tool} />}
         </div>
       </div>
 
@@ -195,10 +216,16 @@ export function CanvasPane({ collectionId }: { collectionId: string }) {
           collectionId={collectionId}
         />
       )}
+      {!focus && readonly && <ViewerToolbar tool={tool} ctrl={ctrl} />}
 
       {selRect && !focus && !readonly && selection.length > 0 && ctrl && <SelectionBar rect={selRect} count={selection.length} ctrl={ctrl} collectionId={collectionId} />}
 
       {focus && ctrl && <FocusBar ctrl={ctrl} focus={focus} />}
+      {focus && infoPanel && focusAsset && (
+        <div className="board-info" style={{ width: `min(${INFO_MAX}px, ${INFO_SHARE * 100}%)` }}>
+          <InfoPanel asset={focusAsset} />
+        </div>
+      )}
 
       {empty && readonly && (
         <div className="board-empty">
@@ -229,6 +256,28 @@ export function CanvasPane({ collectionId }: { collectionId: string }) {
       {hud && ctrl && !readonly && <Hud ctrl={ctrl} onClose={() => updatePrefs({ hud: false })} />}
     </div>
   );
+}
+
+const SIZES: { size: TextSize; label: string; icon: React.ReactNode }[] = [
+  { size: 'h1', label: 'Heading 1', icon: <Heading1 size={15} /> },
+  { size: 'h2', label: 'Heading 2', icon: <Heading2 size={15} /> },
+  { size: 'h3', label: 'Heading 3', icon: <Heading3 size={15} /> },
+  { size: 'body', label: 'Body', icon: <Pilcrow size={15} /> },
+];
+
+// Formatting for the selected text boxes; it applies to each whole box.
+function textMenu(collectionId: string, notes: Note[], edit: () => void): MenuEntry[] {
+  const ids = notes.map((n) => n.id);
+  const all = (f: (n: Note) => boolean) => notes.every(f);
+  return [
+    ...(notes.length === 1 ? [{ label: 'Edit text', icon: <Pencil size={15} />, trail: '↵', onSelect: edit }, 'separator' as const] : []),
+    ...SIZES.map(({ size, label, icon }) => ({ label, icon, checked: all((n) => n.size === size), onSelect: () => formatNotes(collectionId, ids, { size }) })),
+    'separator',
+    { label: 'Bold', icon: <Bold size={15} />, trail: '⌘B', checked: all((n) => n.bold), onSelect: () => toggleNoteFormat(collectionId, ids, 'bold') },
+    { label: 'Italic', icon: <Italic size={15} />, trail: '⌘I', checked: all((n) => n.italic), onSelect: () => toggleNoteFormat(collectionId, ids, 'italic') },
+    { label: 'Underline', icon: <Underline size={15} />, trail: '⌘U', checked: all((n) => n.underline), onSelect: () => toggleNoteFormat(collectionId, ids, 'underline') },
+    'separator',
+  ];
 }
 
 function sameRect(a: Rect | null, b: Rect | null): boolean {
@@ -311,9 +360,10 @@ function BoardToolbar({ tool, ctrl, collectionId }: { tool: Tool; ctrl: BoardCon
       <IconButton label="Hand (H, or hold Space)" pressed={tool === 'hand'} onClick={() => set('hand')}>
         <Hand size={15} />
       </IconButton>
-      <IconButton label="Note (N)" pressed={tool === 'note'} onClick={() => set('note')}>
-        <StickyNote size={15} />
+      <IconButton label="Text (T)" pressed={tool === 'note'} onClick={() => set('note')}>
+        <Type size={15} />
       </IconButton>
+      <CommentToolButton tool={tool} ctrl={ctrl} />
       <span className="sep optional" />
       <IconButton label="Snap to grid" className="optional" pressed={snap} onClick={() => updatePrefs({ snap: !snap })}>
         <Grid3x3 size={15} />

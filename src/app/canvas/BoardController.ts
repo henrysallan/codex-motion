@@ -13,6 +13,7 @@ import { Camera, easeInOut, fitRect, lerpCamera, MAX_ZOOM, MIN_ZOOM, type Rect }
 import { engine } from '../engine.ts';
 import { dropTargets, type DropTarget, on } from '../events.ts';
 import { addAssets } from '../actions.ts';
+import { infoPanelInset, useDetail } from '../detail/state.ts';
 import { space, spaceTap } from '../keys.ts';
 import { arrange, bounds } from '../layout/arrange.ts';
 import {
@@ -23,6 +24,7 @@ import {
   redo,
   savePlacements,
   setFocus,
+  toggleNoteFormat,
   setSelection,
   topZ,
   undo,
@@ -31,7 +33,7 @@ import {
 } from '../store.ts';
 import { overlayColors, type Resolved } from '../theme.ts';
 
-export type Tool = 'select' | 'hand' | 'note';
+export type Tool = 'select' | 'hand' | 'note' | 'comment';
 
 export interface BoardCallbacks {
   // Camera moved (for the zoom readout).
@@ -42,6 +44,9 @@ export interface BoardCallbacks {
   onTool(t: Tool): void;
   onContextMenu(x: number, y: number, hitId: string | null): void;
   onEditNote(id: string): void;
+  // A click with the comment tool, at a pane-relative point. Without it the
+  // board has no comment tool.
+  onComment?(sx: number, sy: number, clientX: number, clientY: number): void;
 }
 
 type Gesture =
@@ -57,13 +62,17 @@ type Gesture =
       // Grabbed corner minus the press point, in world units, so the corner
       // doesn't jump to the pointer on the first move.
       grab: [number, number];
-      minScale: number;
-      // Notes reflow rather than scale, so a notes-only selection resizes
-      // its width.
-      widthOnly: boolean;
+      // Text boxes reflow rather than scale, so a selection of only text
+      // resizes each axis on its own; anything with clips keeps its aspect.
+      free: boolean;
+      minX: number;
+      minY: number;
     }
-  // Note tool press; the note is placed on release.
-  | { kind: 'note'; pointerId: number };
+  // Text tool press, placed on release: a click makes a default box, a drag
+  // draws one (world units).
+  | { kind: 'note'; pointerId: number; sx: number; sy: number; x0: number; y0: number; x1: number; y1: number; dragged: boolean }
+  // Comment tool press: a click drops a pin on release, a drag pans.
+  | { kind: 'comment'; pointerId: number; sx: number; sy: number; x: number; y: number; moved: boolean };
 
 interface FlyIn {
   from: Rect;
@@ -77,7 +86,8 @@ const FLY_MS = 320;
 const NOTE_FALLBACK_H = 80;
 // Resizing stops shrinking at these, in world units.
 const MIN_CLIP_SIDE = 24;
-const MIN_NOTE_W = 80;
+const MIN_NOTE_W = 40;
+const MIN_NOTE_H = 12;
 const CAMERA_KEY = 'trace.camera.';
 
 export class BoardController {
@@ -151,6 +161,9 @@ export class BoardController {
         if (s.focus !== prev.focus) this.syncFocus();
       }),
       on('added', (e) => e.collectionId === collectionId && this.flyIn(e.ids, e.from)),
+      useDetail.subscribe((s, prev) => {
+        if (s.infoPanel !== prev.infoPanel && this.focusId) this.frameFocused();
+      }),
     );
 
     const ro = new ResizeObserver(([entry]) => {
@@ -232,7 +245,7 @@ export class BoardController {
   // ---- store mirror --------------------------------------------------------
 
   private sync(): void {
-    if (this.gesture && this.gesture.kind !== 'pan' && this.gesture.kind !== 'marquee') return;
+    if (this.gesture && this.gesture.kind !== 'pan' && this.gesture.kind !== 'marquee' && this.gesture.kind !== 'comment') return;
     const s = useStore.getState();
     this.placements = new Map(placementsOf(this.collectionId, s.placements).map((p) => [p.id, p]));
     this.notes = new Map(notesOf(this.collectionId, s.notes).map((n) => [n.id, n]));
@@ -269,6 +282,12 @@ export class BoardController {
     return this.selection.size > 0;
   }
 
+  // Height of a note's text alone, at its current width.
+  private textHeight(id: string): number {
+    const el = this.notesLayer.querySelector<HTMLElement>(`[data-note="${id}"] .note-text`);
+    return el?.offsetHeight ?? 0;
+  }
+
   private noteHeight(id: string): number {
     const el = this.notesLayer.querySelector<HTMLElement>(`[data-note="${id}"]`);
     return el?.offsetHeight || NOTE_FALLBACK_H;
@@ -298,14 +317,20 @@ export class BoardController {
       });
     }
     this.view.setItems(items);
-    // Notes follow live geometry while dragged.
+    // Comment pins and notes follow live geometry while dragged.
     for (const [id, b] of this.live) {
+      for (const pin of this.notesLayer.querySelectorAll<HTMLElement>(`[data-anchor="${id}"]`)) {
+        pin.style.left = `${b.x + Number(pin.dataset.px) * b.w}px`;
+        pin.style.top = `${b.y + Number(pin.dataset.py) * b.h}px`;
+      }
       if (!this.notes.has(id)) continue;
       const el = this.notesLayer.querySelector<HTMLElement>(`[data-note="${id}"]`);
       if (el) {
         el.style.left = `${b.x}px`;
         el.style.top = `${b.y}px`;
         el.style.width = `${b.w}px`;
+        // Moves leave a note's height to its text.
+        if (this.gesture?.kind === 'resize') el.style.minHeight = `${b.h}px`;
       }
     }
   }
@@ -339,7 +364,7 @@ export class BoardController {
         }
       }
     }
-    if (g?.kind === 'marquee') {
+    if (g?.kind === 'marquee' || (g?.kind === 'note' && g.dragged)) {
       rects.push({
         x: Math.min(g.x0, g.x1),
         y: Math.min(g.y0, g.y1),
@@ -377,6 +402,8 @@ export class BoardController {
     const c = this.camera;
     this.view.setCamera(c);
     this.notesLayer.style.transform = `scale(${c.zoom}) translate(${-c.x}px, ${-c.y}px)`;
+    // Lets note outlines stay a constant screen width.
+    this.notesLayer.style.setProperty('--zoom', String(c.zoom));
     this.cb.onCamera({ x: c.x, y: c.y, zoom: c.zoom });
     this.pushOverlay();
     this.scheduleSaveCamera();
@@ -519,7 +546,8 @@ export class BoardController {
 
   // Notes call this from their own pointerdown.
   pointerDownOnNote(e: PointerEvent | React.PointerEvent, id: string): void {
-    if (e.button !== 0 || space.down || this.tool === 'hand' || this.readonly) return;
+    // The comment tool pins over notes like anywhere else (onPointerDown).
+    if (e.button !== 0 || space.down || this.tool === 'hand' || this.tool === 'comment' || this.readonly) return;
     e.stopPropagation();
     this.host.focus({ preventScroll: true });
     // Selection handles straddle the note's corners.
@@ -534,11 +562,18 @@ export class BoardController {
   }
 
   private onPointerDown = (e: PointerEvent) => {
-    // Notes handle their own presses (React runs after this native listener).
-    if (e.button === 2 || noteIdOf(e.target)) return;
+    // Notes handle their own presses (React runs after this native listener),
+    // and comment pins and threads are their own UI.
+    if (e.button === 2 || commentIdOf(e.target) || (noteIdOf(e.target) && this.tool !== 'comment')) return;
     this.host.focus({ preventScroll: true });
     cancelAnimationFrame(this.cameraAnim);
     const p = this.local(e);
+    if (e.button === 0 && this.tool === 'comment' && !space.down) {
+      this.host.setPointerCapture(e.pointerId);
+      this.gesture = { kind: 'comment', pointerId: e.pointerId, sx: p.x, sy: p.y, x: e.clientX, y: e.clientY, moved: false };
+      this.setHover(null);
+      return;
+    }
     // Read-only boards pan on any drag.
     if (e.button === 1 || space.down || this.tool === 'hand' || (this.readonly && !this.focusId)) {
       if (space.down) space.used = true;
@@ -569,7 +604,8 @@ export class BoardController {
       // Placing it now would lose the note's focus to the press's own
       // focus change, and an empty note deletes itself on blur.
       this.host.setPointerCapture(e.pointerId);
-      this.gesture = { kind: 'note', pointerId: e.pointerId };
+      const [wx, wy] = this.camera.toWorld(p.x, p.y);
+      this.gesture = { kind: 'note', pointerId: e.pointerId, sx: p.x, sy: p.y, x0: wx, y0: wy, x1: wx, y1: wy, dragged: false };
       return;
     }
     // Marquee on empty board.
@@ -591,15 +627,26 @@ export class BoardController {
     this.host.setPointerCapture(e.pointerId);
     const box = this.selectionBounds()!;
     const originals = new Map<string, Rect>();
-    let minScale = 0;
+    const free = this.notesOnly();
+    // Smallest scale per axis that keeps every item above its minimum size.
+    let minX = 0;
+    let minY = 0;
     for (const id of this.selection) {
       const o = { ...this.boxOf(id)! };
       originals.set(id, o);
-      minScale = Math.max(minScale, this.notes.has(id) ? MIN_NOTE_W / o.w : MIN_CLIP_SIDE / Math.min(o.w, o.h));
+      if (this.notes.has(id)) {
+        minX = Math.max(minX, MIN_NOTE_W / o.w);
+        minY = Math.max(minY, MIN_NOTE_H / o.h);
+      } else {
+        const m = MIN_CLIP_SIDE / Math.min(o.w, o.h);
+        minX = Math.max(minX, m);
+        minY = Math.max(minY, m);
+      }
     }
+    if (!free) minX = minY = Math.max(minX, minY);
     const [wx, wy] = this.camera.toWorld(p.x, p.y);
     const [cx, cy] = corners(box)[corner];
-    this.gesture = { kind: 'resize', pointerId: e.pointerId, corner, box, originals, grab: [cx - wx, cy - wy], minScale, widthOnly: this.notesOnly() };
+    this.gesture = { kind: 'resize', pointerId: e.pointerId, corner, box, originals, grab: [cx - wx, cy - wy], free, minX, minY };
     this.setHover(null);
     engine.scrub(null);
   }
@@ -622,10 +669,23 @@ export class BoardController {
     this.pointer = p;
     const g = this.gesture;
     if (!g) {
-      this.updateHover();
+      if (commentIdOf(e.target)) this.setHover(null);
+      else this.updateHover();
       return;
     }
     if (g.pointerId !== e.pointerId) return;
+    if (g.kind === 'comment') {
+      if (!g.moved && Math.hypot(p.x - g.sx, p.y - g.sy) < MOVE_THRESHOLD_PX) return;
+      if (!g.moved) {
+        g.moved = true;
+        this.host.classList.add('panning');
+      }
+      this.camera.panBy(e.clientX - g.x, e.clientY - g.y);
+      g.x = e.clientX;
+      g.y = e.clientY;
+      this.pushCamera();
+      return;
+    }
     if (g.kind === 'pan') {
       this.camera.panBy(e.clientX - g.x, e.clientY - g.y);
       g.x = e.clientX;
@@ -634,6 +694,13 @@ export class BoardController {
       return;
     }
     const [wx, wy] = this.camera.toWorld(p.x, p.y);
+    if (g.kind === 'note') {
+      g.x1 = wx;
+      g.y1 = wy;
+      g.dragged ||= Math.hypot(p.x - g.sx, p.y - g.sy) >= MOVE_THRESHOLD_PX;
+      this.pushOverlay();
+      return;
+    }
     if (g.kind === 'marquee') {
       g.x1 = wx;
       g.y1 = wy;
@@ -675,10 +742,11 @@ export class BoardController {
       // Scaling keeps the box's aspect, so the corner can only move along its
       // diagonal; put it at the point there nearest the pointer. Past the
       // anchor this goes negative and the minimum takes over.
-      const raw = g.widthOnly ? (tx - ax) / dx : ((tx - ax) * dx + (ty - ay) * dy) / (dx * dx + dy * dy);
-      const s = Math.max(raw, g.minScale);
+      const s = ((tx - ax) * dx + (ty - ay) * dy) / (dx * dx + dy * dy);
+      const sx = Math.max(g.free ? (tx - ax) / dx : s, g.minX);
+      const sy = Math.max(g.free ? (ty - ay) / dy : s, g.minY);
       for (const [id, o] of g.originals) {
-        this.live.set(id, g.widthOnly ? { ...o, x: ax + (o.x - ax) * s, w: o.w * s } : { x: ax + (o.x - ax) * s, y: ay + (o.y - ay) * s, w: o.w * s, h: o.h * s });
+        this.live.set(id, { x: ax + (o.x - ax) * sx, y: ay + (o.y - ay) * sy, w: o.w * sx, h: o.h * sy });
       }
       this.pushItems();
       this.pushOverlay();
@@ -697,12 +765,16 @@ export class BoardController {
       const sel = useStore.getState().selection;
       if (hit && !e.shiftKey && !e.metaKey && !e.ctrlKey && sel.length > 1) setSelection([hit.id]);
     }
-    if ((g.kind === 'move' && g.moved) || g.kind === 'resize') this.commitLive();
+    if ((g.kind === 'move' && g.moved) || g.kind === 'resize') this.commitLive(g.kind === 'resize');
     if (g.kind === 'note' && e.type === 'pointerup') {
-      const p = this.local(e);
       this.setTool('select');
-      this.placeNote(p.x, p.y);
+      if (g.dragged) {
+        const x = Math.min(g.x0, g.x1);
+        const y = Math.min(g.y0, g.y1);
+        this.addNoteBox({ x, y }, { w: Math.max(MIN_NOTE_W, Math.abs(g.x1 - g.x0)), h: Math.max(MIN_NOTE_H, Math.abs(g.y1 - g.y0)) });
+      } else this.placeNote(g.sx, g.sy);
     }
+    if (g.kind === 'comment' && !g.moved && e.type === 'pointerup') this.cb.onComment?.(g.sx, g.sy, e.clientX, e.clientY);
     this.live.clear();
     this.sync();
     this.updateHover();
@@ -714,22 +786,34 @@ export class BoardController {
   };
 
   // Writes mid-gesture geometry back to the store as one undo step.
-  private commitLive(): void {
+  // A move leaves notes' heights alone. A resize keeps a note's height only
+  // if it made the box taller than its text; otherwise the box goes on
+  // fitting its text.
+  private commitLive(resized: boolean): void {
     const ps: Placement[] = [];
     const ns: Note[] = [];
     for (const [id, b] of this.live) {
       const p = this.placements.get(id);
       if (p) ps.push({ ...p, x: b.x, y: b.y, w: b.w, h: b.h });
       const n = this.notes.get(id);
-      if (n) ns.push({ ...n, x: b.x, y: b.y, w: b.w });
+      if (n) ns.push({ ...n, x: b.x, y: b.y, w: b.w, h: resized ? (b.h > this.textHeight(id) + 0.5 ? b.h : null) : n.h });
     }
     this.live.clear();
     savePlacements(this.collectionId, ps, ns);
+    // The gesture set min-heights itself, and React won't clear a style its
+    // props never changed.
+    if (resized) {
+      for (const n of ns) {
+        const el = this.notesLayer.querySelector<HTMLElement>(`[data-note="${n.id}"]`);
+        if (el) el.style.minHeight = n.h === null ? '' : `${n.h}px`;
+      }
+    }
   }
 
   private onDoubleClick = (e: MouseEvent) => {
-    // Double-clicks inside a note being edited select words.
-    if ((e.target as HTMLElement).isContentEditable) return;
+    // Double-clicks inside a note being edited select words. The comment
+    // tool's clicks each drop a pin.
+    if ((e.target as HTMLElement).isContentEditable || this.tool === 'comment' || commentIdOf(e.target)) return;
     const p = this.local(e);
     // A press on a note captures the pointer, which retargets the dblclick
     // to the host, so find the note by position too.
@@ -748,9 +832,18 @@ export class BoardController {
   // Adds an empty note at a pane-relative point and starts editing it.
   placeNote(sx: number, sy: number): void {
     const [wx, wy] = this.camera.toWorld(sx, sy);
-    const n = addNote(this.collectionId, { x: wx, y: wy });
+    this.addNoteBox({ x: wx, y: wy });
+  }
+
+  private addNoteBox(at: { x: number; y: number }, size?: { w: number; h: number }): void {
+    const n = addNote(this.collectionId, at, size);
     setSelection([n.id]);
     this.cb.onEditNote(n.id);
+  }
+
+  editNote(id: string): void {
+    setSelection([id]);
+    this.cb.onEditNote(id);
   }
 
   placeNoteAtClient(clientX: number, clientY: number): void {
@@ -759,6 +852,8 @@ export class BoardController {
   }
 
   private onContextMenu = (e: MouseEvent) => {
+    // Comment fields keep the browser's menu (paste).
+    if (commentIdOf(e.target)) return;
     e.preventDefault();
     if (this.readonly) return;
     const p = this.local(e);
@@ -775,7 +870,7 @@ export class BoardController {
     const hit = this.hitTest(this.pointer.x, this.pointer.y);
     this.setHover(hit?.id ?? null);
     const corner = this.handleAt(this.pointer.x, this.pointer.y);
-    this.host.dataset.handle = corner < 0 ? '' : this.notesOnly() ? 'x' : String(corner % 2);
+    this.host.dataset.handle = corner < 0 ? '' : String(corner % 2);
     if (hit && useStore.getState().scrubOnHover) {
       const [wx] = this.camera.toWorld(this.pointer.x, this.pointer.y);
       engine.scrub(hit.assetId, Math.min(0.9999, Math.max(0, (wx - hit.x) / hit.w)));
@@ -796,7 +891,7 @@ export class BoardController {
     if (t instanceof HTMLButtonElement && (e.key === 'Enter' || e.key === ' ')) return;
     const meta = e.metaKey || e.ctrlKey;
     const key = e.key.toLowerCase();
-    if (this.readonly && (meta || ['delete', 'backspace', 'n', 'i', 'o', 'v', '`'].includes(key))) return;
+    if (this.readonly && (meta || ['delete', 'backspace', 'n', 't', 'i', 'o', '`'].includes(key))) return;
     if (this.readonly && key.startsWith('arrow')) {
       const step = e.shiftKey ? 400 : 100;
       this.camera.panBy(key === 'arrowleft' ? step : key === 'arrowright' ? -step : 0, key === 'arrowup' ? step : key === 'arrowdown' ? -step : 0);
@@ -809,12 +904,19 @@ export class BoardController {
       else undo(this.collectionId);
     } else if (meta && key === 'y') redo(this.collectionId);
     else if (meta && key === 'a') setSelection([...this.placements.keys(), ...this.notes.keys()]);
-    else if (meta) return;
+    else if (meta && (key === 'b' || key === 'i' || key === 'u')) {
+      const ids = [...this.selection].filter((id) => this.notes.has(id));
+      if (!ids.length) return;
+      toggleNoteFormat(this.collectionId, ids, key === 'b' ? 'bold' : key === 'i' ? 'italic' : 'underline');
+    } else if (meta) return;
     else if (key === 'delete' || key === 'backspace') this.deleteSelection();
+    else if (key === 'enter' && this.selection.size === 1 && this.notes.has([...this.selection][0])) this.editNote([...this.selection][0]);
     else if (key === 'escape') {
-      if (this.focusId) this.exitFocus();
+      if (this.tool === 'comment') this.setTool('select');
+      else if (this.focusId) this.exitFocus();
       else setSelection([]);
-    } else if (key.startsWith('arrow')) {
+    } else if (key === 'c' && this.cb.onComment) this.setTool(this.tool === 'comment' ? 'select' : 'comment');
+    else if (key.startsWith('arrow')) {
       const step = e.shiftKey ? 10 : 1;
       const dx = key === 'arrowleft' ? -step : key === 'arrowright' ? step : 0;
       const dy = key === 'arrowup' ? -step : key === 'arrowdown' ? step : 0;
@@ -829,7 +931,7 @@ export class BoardController {
     else if (key === '-') this.zoomBy(0.8);
     else if (key === 'v') this.setTool('select');
     else if (key === 'h') this.setTool('hand');
-    else if (key === 'n') this.setTool('note');
+    else if (key === 'n' || key === 't') this.setTool('note');
     else if (key === '`') updatePrefs({ hud: !useStore.getState().hud });
     else if (key === 'i' && this.focusId) this.setRangeAtPlayhead('in');
     else if (key === 'o' && this.focusId) this.setRangeAtPlayhead('out');
@@ -968,7 +1070,9 @@ export class BoardController {
   private frameFocused(): void {
     const p = this.focusId ? this.placements.get(this.focusId) : null;
     if (!p) return;
-    void this.animateTo(fitRect(p, this.size.w, Math.max(100, this.size.h - 110), 40), 420);
+    // Leave room for the info panel too, when it's docked on the right.
+    const w = Math.max(100, this.size.w - infoPanelInset(this.size.w));
+    void this.animateTo(fitRect(p, w, Math.max(100, this.size.h - 110), 40), 420);
   }
 
   seekFocus(seconds: number): void {
@@ -1022,10 +1126,24 @@ export class BoardController {
   placementList(): Placement[] {
     return [...this.placements.values()];
   }
+
+  // Where a comment dropped at a pane-relative point goes: the canvas point,
+  // and the topmost clip there with the point's place on it.
+  commentSpotAt(sx: number, sy: number): { x: number; y: number; placementId: string | null; px: number | null; py: number | null } {
+    const [x, y] = this.camera.toWorld(sx, sy);
+    const p = this.hitTest(sx, sy);
+    if (!p) return { x, y, placementId: null, px: null, py: null };
+    const clamp = (v: number) => Math.min(1, Math.max(0, v));
+    return { x, y, placementId: p.id, px: clamp((x - p.x) / p.w), py: clamp((y - p.y) / p.h) };
+  }
 }
 
 function noteIdOf(t: EventTarget | null): string | null {
   return (t instanceof Element && t.closest<HTMLElement>('[data-note]')?.dataset.note) || null;
+}
+
+function commentIdOf(t: EventTarget | null): string | null {
+  return (t instanceof Element && t.closest<HTMLElement>('[data-comment]')?.dataset.comment) || null;
 }
 
 function corners(b: Rect): [number, number][] {

@@ -1,11 +1,14 @@
 // Focus mode controls: play/pause, frame step, speed, a timeline with
-// in/out points, and the quality being shown. The playhead updates every
-// frame from the engine, so it's moved through refs, not React state.
+// in/out points, the quality being shown and the info panel toggle. The
+// playhead updates every frame from the engine, so it's moved through refs,
+// not React state.
 
 import { ChevronLeft, ChevronRight, Pause, Play, X } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { IconButton, Segmented } from '../../ui/controls.tsx';
 import { engine } from '../engine.ts';
+import { InfoToggle } from '../detail/InfoPanel.tsx';
+import { useDetail } from '../detail/state.ts';
 import { clock } from '../format.ts';
 import { type FocusTarget, setFocus, useStore } from '../store.ts';
 import type { BoardController } from './BoardController.ts';
@@ -15,6 +18,7 @@ const SPEEDS = [0.25, 0.5, 1, 2];
 export function FocusBar({ ctrl, focus }: { ctrl: BoardController; focus: FocusTarget }) {
   const placement = useStore((s) => s.placements[focus.placementId]);
   const asset = useStore((s) => (placement ? s.assets[placement.assetId] : undefined));
+  const infoPanel = useDetail((s) => s.infoPanel);
   const track = useRef<HTMLDivElement>(null);
   const head = useRef<HTMLDivElement>(null);
   const time = useRef<HTMLSpanElement>(null);
@@ -82,7 +86,7 @@ export function FocusBar({ ctrl, focus }: { ctrl: BoardController; focus: FocusT
   const ranged = placement.inPoint !== null || placement.outPoint !== null;
 
   return (
-    <div className="focus-bar float-bar">
+    <div className={`focus-bar float-bar ${infoPanel ? 'with-info' : ''}`}>
       <IconButton label={focus.playing ? 'Pause (Space)' : 'Play (Space)'} onClick={() => setFocus({ ...focus, playing: !focus.playing })}>
         {focus.playing ? <Pause size={15} /> : <Play size={15} />}
       </IconButton>
@@ -117,6 +121,7 @@ export function FocusBar({ ctrl, focus }: { ctrl: BoardController; focus: FocusT
         {quality}
       </span>
       <span className="sep" />
+      <InfoToggle on={infoPanel} />
       <IconButton label="Exit focus (Esc)" size="sm" onClick={() => ctrl.exitFocus()}>
         <X size={14} />
       </IconButton>

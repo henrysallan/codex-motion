@@ -20,11 +20,15 @@ What works:
   scrub, global pause.
 - Focus mode (double-click): the clip on its own clock at the best tier on
   this device (the original for uploads), play/pause, frame step, speed,
-  in/out points that the board loop then respects.
+  in/out points that the board loop then respects. An info panel beside it
+  shows the clip's project, credits and AI tags (toggle in the focus bar).
 - Feed: the shared library in a seeded shuffle; select (click, shift, cmd,
   marquee), add to the active target or pick a collection, or drag onto the
   canvas. New clips land at the last drop point, relax off anything they
-  overlap, and fly in.
+  overlap, and fly in. Double-click a tile for its details: the clip at
+  full quality, with the scraped project (client, studio, year, credits,
+  tags, source links) and the AI caption and tags beside it; arrows step
+  through the Feed.
 - Ingest: drop or paste videos, GIFs or images onto the canvas. A file is
   placed within ~60 ms playing from the file itself, then decoded once in a
   worker into L0/L1/L2 (H.264 via WebCodecs) in OPFS; a 4 s 1080p clip
@@ -53,7 +57,10 @@ library (the M0 gate), `npm run gen:clips` makes 200 test clips in
 With `VITE_SUPABASE_*` set the app signs in and reads the shared library
 from Supabase and R2; `npm run upload:library` pushes `public/media`'s
 proxies to R2 (multipart for files over 90 MB) and writes the SQL that
-registers them. Leave those variables empty to run fully local.
+registers them. With `SUPABASE_SERVICE_ROLE_KEY` in `.env.local` it
+registers them itself, with each clip's scraped metadata and AI tags (the
+`source` and `analysis` columns, too big for the SQL file). Leave those
+variables empty to run fully local.
 
 ### Scraping a site
 
@@ -142,6 +149,52 @@ FFMPEG=/path/to/ffmpeg npm run tag                          # caption + motion t
   input and 175 output tokens, $0.0004 a clip. `--only <site|id>`,
   `--limit`, `--force` and `--model` narrow or change a run.
 
+### Search
+
+```bash
+npm run index                 # rebuild the search index from the library, tags and embeddings
+```
+
+```bash
+npm run index -- --upload     # and send it to R2 for signed-in users (needs MEDIA_ADMIN_TOKEN)
+```
+
+The search bar sits at the top of the Feed. Type words, pick a suggestion
+(`Client · Nike`) or write `studio:koto`, `client:"utah jazz"`, `-loop`,
+`"kinetic type"`; picked values become chips, which are hard filters. The
+sliders button opens the panel: a **fuzziness** slider, the order (best
+match, shuffle, newest) and every facet with live counts: technique, content
+(logo reveal, UI motion...), project type, studio, client, sector, source
+site, colour, camera, easing, pacing, aspect, length, year. Select clips and
+press **Similar** for more that look like them. `/` focuses the search.
+
+- **Where it runs.** All of it runs in a worker (`src/search/`), over an index
+  that `npm run index` builds into `public/media/search/` from
+  `library.json` and the embeddings. The index is about 0.6 MB gzipped of
+  text plus 3.2 MB of int8 vectors for 4,082 clips, content-hashed so it
+  caches forever. A keystroke reaches new results in about 30 ms (the worker
+  takes 2–18 ms of that).
+- **Text** is BM25 over weighted fields (title, studio and client, tags,
+  project type and sector, caption, page description), with prefix matching
+  for the word being typed.
+- **Looks.** Query text is embedded with the same SigLIP 2 model as the
+  clips, by `GET /api/embed?q=` (a Vercel Function, `api/embed.ts`; the dev
+  server serves it from `media/models`). Clips are scored against it, and
+  against the average of the best text matches ("more like these"), as
+  z-scores per query. Responses are immutable, so each phrase is embedded
+  once and then served from the CDN and browser cache. Without the endpoint,
+  search still works on text and "more like these".
+- **Fuzziness** goes from *Exact* (every word, as typed; nothing on looks
+  alone) through *Close* (typos for unknown words, word starts) and
+  *Related* (most words, plus clips that look strongly alike) to *Wide*
+  (some words, plus anything that resembles the query, about the top 10%).
+  "zebra" matches no words in the library; at *Related* it finds 35
+  black-and-white stripe pieces.
+- **Facets** come from the scraped page (studio, client, year, site) and the
+  tags. Studios' own tags ("Motion Graphics & Film", "Fintech") map onto
+  fixed project types and sectors in `src/search/taxonomy.ts`; anything
+  unmapped is still searchable as text.
+
 ### Canvas controls
 
 Two-finger scroll pans; pinch, ctrl/cmd + wheel or a mouse wheel zooms.
@@ -197,7 +250,9 @@ Code map: `src/engine/` (render worker), `src/ingest/` (ingest worker),
 `src/app/` (React UI: `store.ts`, `Workspace.tsx`, `collections/`, `feed/`,
 `canvas/BoardController.ts`, `layout/` placement and arrange), `src/data/`
 (model and IndexedDB), `src/media/` (BC1 codec, L0 format, shared with the
-scripts), `scripts/` (clip generator, proxy builder, tests).
+scripts), `src/search/` (search engine, worker and taxonomy), `api/` (the
+query embedding function), `scripts/` (clip generator, proxy builder,
+scraper, tagging, embeddings, search index, tests).
 
 ## M0 results
 

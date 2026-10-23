@@ -2,7 +2,7 @@
 // back, loads a signed-in user's workspace or a public collection, and
 // pushes batches of edits in foreign-key order.
 
-import type { AssetRecord, Collection, Note, Placement, User } from './model.ts';
+import { type AssetRecord, type Collection, DEFAULT_FORMAT, type Note, type Placement, type TextSize, type User } from './model.ts';
 import { supabase } from './supabase.ts';
 
 type Row = Record<string, unknown>;
@@ -68,6 +68,9 @@ export function rowToAsset(r: Row): AssetRecord {
     sourceUrl: (r.source_url as string) ?? undefined,
     sourceTitle: (r.source_title as string) ?? undefined,
     uploaded: r.status === 'ready',
+    // Only in rows selected with them (see COLUMNS).
+    ...(r.source ? { source: r.source as AssetRecord['source'] } : {}),
+    ...(r.analysis ? { analysis: r.analysis as AssetRecord['analysis'] } : {}),
   };
 }
 
@@ -134,7 +137,20 @@ export function rowToPlacement(r: Row): Placement {
   };
 }
 
-export const noteToRow = (n: Note): Row => ({ id: n.id, collection_id: n.collectionId, x: n.x, y: n.y, w: n.w, text: n.text, z: n.z });
+export const noteToRow = (n: Note): Row => ({
+  id: n.id,
+  collection_id: n.collectionId,
+  x: n.x,
+  y: n.y,
+  w: n.w,
+  h: n.h,
+  text: n.text,
+  size: n.size,
+  bold: n.bold,
+  italic: n.italic,
+  underline: n.underline,
+  z: n.z,
+});
 
 export const rowToNote = (r: Row): Note => ({
   id: r.id as string,
@@ -142,7 +158,12 @@ export const rowToNote = (r: Row): Note => ({
   x: r.x as number,
   y: r.y as number,
   w: r.w as number,
+  h: (r.h as number) ?? null,
   text: r.text as string,
+  size: (r.size as TextSize) ?? DEFAULT_FORMAT.size,
+  bold: (r.bold as boolean) ?? false,
+  italic: (r.italic as boolean) ?? false,
+  underline: (r.underline as boolean) ?? false,
   z: r.z as number,
 });
 
@@ -162,8 +183,22 @@ async function all(table: string, filter?: (q: ReturnType<typeof select>) => Ret
   }
 }
 
+// Asset rows leave out source and analysis (about 1.4 KB a row); the
+// details panel reads them one asset at a time (fetchAssetMeta).
+const COLUMNS: Record<string, string> = {
+  assets: 'id, name, origin, status, duration, width, height, fps, renditions, source_url, source_title, added_by, added_at, updated_at',
+};
+
 function select(table: string) {
-  return supabase!.from(table).select('*');
+  // Typed as '*': supabase-js can't parse a column list that isn't a literal.
+  return supabase!.from(table).select((COLUMNS[table] ?? '*') as '*');
+}
+
+export async function fetchAssetMeta(id: string): Promise<Pick<AssetRecord, 'source' | 'analysis'>> {
+  const { data, error } = await supabase!.from('assets').select('source, analysis').eq('id', id).maybeSingle();
+  if (error) throw new Error(`assets: ${error.message}`);
+  const r = (data ?? {}) as Row;
+  return { source: (r.source as AssetRecord['source']) ?? undefined, analysis: (r.analysis as AssetRecord['analysis']) ?? undefined };
 }
 
 // Chunks long id lists so filter URLs stay short.

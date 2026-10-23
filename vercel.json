@@ -3,7 +3,13 @@
   "framework": "vite",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "rewrites": [{ "source": "/((?!assets/).*)", "destination": "/index.html" }],
+  "functions": {
+    "api/embed.ts": {
+      "maxDuration": 60,
+      "excludeFiles": "node_modules/{onnxruntime-node/bin/napi-v6/{darwin,win32,linux/arm64},onnxruntime-web,@img/sharp-{darwin,win32}*}/**"
+    }
+  },
+  "rewrites": [{ "source": "/((?!assets/|api/).*)", "destination": "/index.html" }],
   "headers": [
     {
       "source": "/assets/(.*)",

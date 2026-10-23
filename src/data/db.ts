@@ -8,7 +8,7 @@
 
 import { type DBSchema, type IDBPDatabase, openDB } from 'idb';
 import { remoteEnabled } from '../config.ts';
-import type { AssetRecord, Collection, Note, Placement, User } from './model.ts';
+import { type AssetRecord, type Collection, type Note, type Placement, type User, withNoteDefaults } from './model.ts';
 import { assetToRow, collectionToRow, noteToRow, placementToRow } from './remote.ts';
 import { enqueue } from './sync.ts';
 
@@ -56,7 +56,7 @@ export async function loadAll(): Promise<Snapshot> {
     d.get('meta', 'user') as Promise<User | undefined>,
     d.get('meta', 'seeded'),
   ]);
-  return { assets, collections, placements, notes, user, seeded: !!seeded };
+  return { assets, collections, placements, notes: notes.map(withNoteDefaults), user, seeded: !!seeded };
 }
 
 // Writes queue per record and flush on a short timer, so a drag that

@@ -1,6 +1,8 @@
 // Uploads the sample library's proxies (public/media) to cloud storage
 // through the media Worker, and writes the SQL that registers them as
-// library assets. Skips files already uploaded, so it's safe to re-run.
+// library assets. With SUPABASE_SERVICE_ROLE_KEY it registers them itself,
+// with each asset's source and analysis records. Skips files already
+// uploaded, so it's safe to re-run.
 //
 //   node --env-file=.env.local scripts/upload-library.ts [--sql out.sql]
 //
@@ -87,17 +89,19 @@ await pool(files, 6, async (key) => {
   }
 });
 
-// SQL for the asset rows, keyed to the same storage paths.
+const renditions = (a: Asset) => {
+  const r: Record<string, unknown> = {};
+  if (a.l0) r.l0 = { key: a.l0.url, format: a.l0.format, frameWidth: a.l0.frameWidth, frameHeight: a.l0.frameHeight, frameCount: a.l0.frameCount, bytes: a.l0.bytes };
+  r.l1 = { key: a.l1.url, width: a.l1.width, height: a.l1.height, bytes: a.l1.bytes };
+  if (a.l2) r.l2 = { key: a.l2.url, width: a.l2.width, height: a.l2.height, bytes: a.l2.bytes };
+  return r;
+};
+
+// SQL for the asset rows, keyed to the same storage paths. It leaves out
+// source and analysis (about 1.4 KB a row); those go in through the API.
 const sqlOut = arg('sql', '');
 if (sqlOut) {
   const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
-  const renditions = (a: Asset) => {
-    const r: Record<string, unknown> = {};
-    if (a.l0) r.l0 = { key: a.l0.url, format: a.l0.format, frameWidth: a.l0.frameWidth, frameHeight: a.l0.frameHeight, frameCount: a.l0.frameCount, bytes: a.l0.bytes };
-    r.l1 = { key: a.l1.url, width: a.l1.width, height: a.l1.height, bytes: a.l1.bytes };
-    if (a.l2) r.l2 = { key: a.l2.url, width: a.l2.width, height: a.l2.height, bytes: a.l2.bytes };
-    return r;
-  };
   const rows = library.assets.map(
     (a) =>
       `(${q(a.id)}, ${q(a.name)}, ${a.source ? "'scraper'" : "'library'"}, 'ready', ${a.duration}, ${a.width}, ${a.height}, ${a.fps}, ${q(JSON.stringify(renditions(a)))}::jsonb, ` +
@@ -109,4 +113,40 @@ if (sqlOut) {
     `\non conflict (id) do update set renditions = excluded.renditions, status = excluded.status, source_url = excluded.source_url, source_title = excluded.source_title;\n`;
   fs.writeFileSync(sqlOut, sql);
   console.log(`wrote ${sqlOut}`);
+}
+
+// With the service role key the rows go straight in, source and analysis
+// included. Library rows belong to no user, so nothing else can write them.
+const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseUrl = process.env.VITE_SUPABASE_URL?.replace(/\/$/, '');
+if (serviceKey && supabaseUrl) {
+  const rows = library.assets.map((a) => ({
+    id: a.id,
+    name: a.name,
+    origin: a.source ? 'scraper' : 'library',
+    status: 'ready',
+    duration: a.duration,
+    width: a.width,
+    height: a.height,
+    fps: a.fps,
+    renditions: renditions(a),
+    source_url: a.source?.pageUrl ?? null,
+    source_title: a.source ? (a.source.pageTitle ?? a.source.title) : null,
+    source: a.source ?? null,
+    analysis: a.analysis ?? null,
+  }));
+  const headers: Record<string, string> = {
+    apikey: serviceKey,
+    'Content-Type': 'application/json',
+    Prefer: 'resolution=merge-duplicates,return=minimal',
+  };
+  // A legacy service_role JWT also goes in Authorization; sb_secret_ keys don't.
+  if (serviceKey.startsWith('eyJ')) headers.Authorization = `Bearer ${serviceKey}`;
+  for (let i = 0; i < rows.length; i += 250) {
+    const batch = JSON.stringify(rows.slice(i, i + 250));
+    await retry('assets', async () => void (await ok(await fetch(`${supabaseUrl}/rest/v1/assets?on_conflict=id`, { method: 'POST', headers, body: batch }))));
+  }
+  console.log(`registered ${rows.length} assets, with source and analysis, in ${supabaseUrl}`);
+} else {
+  console.log('Set SUPABASE_SERVICE_ROLE_KEY to register the rows directly, with project metadata and tags.');
 }

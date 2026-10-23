@@ -2,15 +2,19 @@
 // shuffle (scrolling back shows the same order; reshuffle draws a new one).
 // Select clips (click, shift-click, cmd-click, marquee) and add them to the
 // active target, pick a collection, or drag them onto the open canvas.
+// Double-click a tile for its details (src/app/detail). The search bar at
+// the top narrows and reorders the tiles (FeedSearch.tsx, src/search).
 //
 // The library runs to thousands of clips, so only tiles near the viewport
 // are mounted, and the engine gets items for a wider band: it loads sprites
 // two viewports either side of the visible area, and needs the items to.
 
-import { Check, Crosshair, EyeOff, FolderPlus, Plus, Search, Shuffle, X } from 'lucide-react';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { Check, Crosshair, EyeOff, FolderPlus, Plus, Search, SearchX, Shuffle, Sparkles, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AssetRecord } from '../../data/model.ts';
 import type { OverlayRect, ViewItem } from '../../engine/protocol.ts';
+import { useFeedSearch, useSearch } from '../../search/client.ts';
+import type { PoolItem } from '../../search/engine.ts';
 import { Button, IconButton } from '../../ui/controls.tsx';
 import { Popover } from '../../ui/popover.tsx';
 import { engine } from '../engine.ts';
@@ -23,6 +27,7 @@ import {
   collectedAssetIds,
   createCollection,
   openCollection,
+  setFeedQuery,
   setFeedSelection,
   shuffled,
   updatePrefs,
@@ -30,6 +35,8 @@ import {
 } from '../store.ts';
 import { useResolvedTheme } from '../theme.ts';
 import { overlayColors } from '../theme.ts';
+import { openDetail } from '../detail/state.ts';
+import { fuzzStop, isSearching, SearchBar, SearchPanel } from './FeedSearch.tsx';
 
 const PAD = 12;
 const GAP = 6;
@@ -71,7 +78,23 @@ export function FeedPane() {
 
   const collected = useMemo(() => collectedAssetIds(placements), [placements]);
   const order = useMemo(() => shuffled(Object.values(assets).filter((a) => (a.origin === 'library' || a.origin === 'scraper') && a.status === 'ready'), seed), [assets, seed]);
-  const visible = useMemo(() => (hideAdded ? order.filter((a) => !collected.has(a.id)) : order), [order, hideAdded, collected]);
+
+  // Search runs in a worker over the shuffled pool. With no search (and the
+  // default order) the Feed doesn't wait for it.
+  const query = useStore((s) => s.feedQuery);
+  const searchOpen = useStore((s) => s.feedSearchOpen);
+  const pool = useMemo<PoolItem[]>(
+    () => order.map((a) => ({ id: a.id, name: a.sourceTitle ?? a.name, width: a.width, height: a.height, duration: a.duration, added: Math.round(a.addedAt / 1000) })),
+    [order],
+  );
+  const exclude = useMemo(() => (hideAdded ? [...collected] : null), [hideAdded, collected]);
+  useFeedSearch(pool, query, exclude);
+  const result = useSearch((s) => s.result);
+  const searching = isSearching(query);
+  const visible = useMemo(() => {
+    if ((searching || query.sort === 'newest') && result) return result.ids.map((id) => assets[id]).filter((a): a is AssetRecord => !!a);
+    return hideAdded ? order.filter((a) => !collected.has(a.id)) : order;
+  }, [searching, query.sort, result, assets, order, hideAdded, collected]);
 
   const { tiles, height } = useMemo(() => {
     const width = Math.max(0, size.w - PAD * 2);
@@ -114,6 +137,14 @@ export function FeedPane() {
   }, [marquee, theme]);
 
   const select = (ids: string[]) => setFeedSelection(ids);
+
+  // A new search starts at the top.
+  useEffect(() => {
+    const s = surface.current;
+    if (s?.scrollTop) s.scrollBy(-s.scrollTop);
+  }, [query]);
+
+  const nameOf = useCallback((id: string) => assets[id]?.sourceTitle ?? assets[id]?.name ?? 'clip', [assets]);
 
   const onTileDown = (e: React.PointerEvent<HTMLDivElement>, index: number) => {
     if (e.button !== 0) return;
@@ -208,10 +239,8 @@ export function FeedPane() {
 
   return (
     <div className="feed">
-      <header className="pane-head">
-        <h1>
-          Feed<span className="count">{visible.length}</span>
-        </h1>
+      <header className="pane-head feed-head">
+        <SearchBar result={result} count={visible.length} names={nameOf} />
         <div className="actions">
           <IconButton label="Hide clips already in a collection" pressed={hideAdded} onClick={() => updatePrefs({ feedHideAdded: !hideAdded })}>
             <EyeOff size={15} />
@@ -221,6 +250,7 @@ export function FeedPane() {
           </IconButton>
         </div>
       </header>
+      {searchOpen && <SearchPanel result={result} />}
       <div className="pane-toolbar feed-toolbar">
         {selection.length > 0 ? (
           <>
@@ -228,6 +258,10 @@ export function FeedPane() {
             <IconButton label="Clear selection" size="sm" onClick={() => select([])}>
               <X size={15} />
             </IconButton>
+            <Button size="sm" variant="ghost" title="Find clips that look like these" onClick={() => setFeedQuery({ similar: selection.slice(0, 12) })}>
+              <Sparkles size={13} />
+              Similar
+            </Button>
             <Button variant="primary" size="sm" className="add-btn" onClick={(e) => addSelection(e.currentTarget)}>
               {target ? <Crosshair size={14} strokeWidth={2.4} /> : <Plus size={15} strokeWidth={2.4} />}
               {target ? `Add to ${target.name}` : 'Add to…'}
@@ -245,6 +279,22 @@ export function FeedPane() {
           </span>
         )}
       </div>
+      {searching && result && visible.length === 0 && (
+        <div className="feed-empty">
+          <SearchX size={18} />
+          <p>No clips match{query.fuzziness < 1 ? ` at “${fuzzStop(query.fuzziness).label}”` : ''}.</p>
+          <div className="row">
+            {query.fuzziness < 1 && (query.text.trim() || query.similar.length > 0) && (
+              <Button size="sm" onClick={() => setFeedQuery({ fuzziness: Math.min(1, query.fuzziness + 0.25) })}>
+                Loosen
+              </Button>
+            )}
+            <Button size="sm" variant="ghost" onClick={() => setFeedQuery({ text: '', filters: {}, similar: [] })}>
+              Clear search
+            </Button>
+          </div>
+        </div>
+      )}
       <ScrollSurface items={items} overlay={overlay} contentHeight={height} onResize={onResize} onWindow={setWin} handle={surface} onPointerDown={onBackgroundDown}>
         {tiles.slice(domStart, domEnd).map((t, k) => {
           const i = domStart + k;
@@ -256,6 +306,7 @@ export function FeedPane() {
               onPointerDown={(e) => onTileDown(e, i)}
               onPointerMove={(e) => engine.scrub(t.asset.id, fractionAcross(e))}
               onPointerLeave={() => engine.scrub(null)}
+              onDoubleClick={() => openDetail(t.asset.id, tiles.map((x) => x.asset.id))}
             >
               {collected.has(t.asset.id) && (
                 <span className="added-mark" title="In a collection">
@@ -274,7 +325,7 @@ export function FeedPane() {
 
 // "Add to": suggested collections (most recently touched first), search,
 // and New collection.
-function AddToPopover({ anchor, assetIds, onClose, onAdded }: { anchor: HTMLElement; assetIds: string[]; onClose: () => void; onAdded: () => void }) {
+export function AddToPopover({ anchor, assetIds, onClose, onAdded }: { anchor: HTMLElement; assetIds: string[]; onClose: () => void; onAdded: () => void }) {
   const collections = useStore((s) => s.collections);
   const [q, setQ] = useState('');
   const list = Object.values(collections)

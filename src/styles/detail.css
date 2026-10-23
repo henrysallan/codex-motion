@@ -1,0 +1,389 @@
+/* Clip details: the Feed's details view (player and info panel over the
+   workspace) and the info panel docked in canvas focus mode. */
+
+.detail {
+  position: fixed;
+  /* Below the top bar, inside the workspace's margins. */
+  top: 46px;
+  left: 6px;
+  right: 6px;
+  bottom: 6px;
+  z-index: 50;
+  display: flex;
+  gap: 6px;
+  /* Covers the panes behind, gap included. */
+  background: var(--app-bg);
+  outline: none;
+  animation: detail-in 0.16s ease-out;
+}
+
+@keyframes detail-in {
+  from {
+    opacity: 0;
+    transform: scale(0.995);
+  }
+}
+
+.detail-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  border-radius: var(--radius-xl);
+  background: var(--board-bg);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  container-type: inline-size;
+}
+
+.detail-top {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.detail-count {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--pill);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-2);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.detail-nav {
+  position: absolute;
+  top: 50%;
+  z-index: 1;
+  translate: 0 -50%;
+}
+
+.detail-nav.prev {
+  left: 10px;
+}
+
+.detail-nav.next {
+  right: 10px;
+}
+
+.detail-frame {
+  position: absolute;
+  inset: 46px 50px 58px;
+  display: grid;
+  place-items: center;
+}
+
+.detail-video {
+  display: block;
+  border-radius: var(--radius-md);
+  background: #000;
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+}
+
+.detail > .info-panel {
+  flex: none;
+  width: 320px;
+}
+
+@media (max-width: 760px) {
+  .detail {
+    flex-direction: column;
+  }
+
+  .detail > .info-panel {
+    width: auto;
+    height: 44%;
+  }
+}
+
+/* Docked beside a clip in canvas focus mode, below the zoom pill. */
+.board-info {
+  position: absolute;
+  top: 46px;
+  right: 8px;
+  bottom: 8px;
+  z-index: 4;
+  animation: pop-in 0.14s ease-out;
+}
+
+.board-info .info-panel {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+}
+
+.board .focus-bar.with-info {
+  right: calc(min(300px, 45%) + 16px);
+}
+
+/* Beside the panel the bar has ~320 px less room: drop the extras sooner. */
+@container (max-width: 900px) {
+  .board .focus-bar.with-info .segmented,
+  .board .focus-bar.with-info .focus-duration,
+  .board .focus-bar.with-info .badge {
+    display: none;
+  }
+}
+
+/* The panel. */
+.info-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.info-head {
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.info-site {
+  margin-bottom: 3px;
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+
+.info-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.info-clip {
+  margin-top: 3px;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.info-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.info-actions .btn {
+  max-width: 100%;
+  text-decoration: none;
+}
+
+.info-add-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.info-body {
+  flex: 1;
+  min-height: 0;
+  padding: 0 16px 12px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.info-section {
+  padding: 12px 0 10px;
+}
+
+.info-section + .info-section {
+  border-top: 1px solid var(--border);
+}
+
+.info-section h3 {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.info-section h3 svg {
+  color: var(--text-2);
+}
+
+.info-aside {
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-weight: 450;
+}
+
+.info-fields {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+}
+
+.info-fields > div,
+.info-credits li {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+}
+
+.info-fields dt,
+.info-credits li span,
+.info-label {
+  color: var(--text-2);
+}
+
+.info-fields dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.info-fields a {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 2px;
+}
+
+.info-fields a:hover {
+  text-decoration-color: currentColor;
+}
+
+.info-tags > div {
+  align-items: start;
+}
+
+.info-tags dt {
+  padding-top: 2px;
+}
+
+.info-group {
+  margin-top: 10px;
+}
+
+.info-label {
+  margin-bottom: 4px;
+}
+
+.info-description,
+.info-caption {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.info-description.clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+
+.info-more {
+  margin-top: 2px;
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.info-more:hover {
+  color: var(--text);
+}
+
+.info-caption {
+  margin-bottom: 10px;
+}
+
+.info-credits {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.info-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.info-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: var(--pill);
+  background: var(--surface-3);
+  font-size: 10.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.info-chip.vocab {
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+span.info-chip[title] {
+  cursor: help;
+}
+
+/* Values and chips that search the Feed. */
+button.info-chip:hover {
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
+.info-value {
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 2px;
+  transition: text-decoration-color 0.12s;
+}
+
+.info-value:hover {
+  text-decoration-color: currentColor;
+}
+
+.info-empty {
+  margin: 0;
+  color: var(--text-3);
+}
+
+.info-skeleton {
+  display: grid;
+  gap: 7px;
+  padding: 2px 0;
+}
+
+.info-skeleton span {
+  height: 9px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  animation: info-pulse 0.9s ease-in-out infinite alternate;
+}
+
+@keyframes info-pulse {
+  to {
+    opacity: 0.45;
+  }
+}

@@ -13,5 +13,5 @@
     "noUnusedLocals": true,
     "skipLibCheck": true
   },
-  "include": [".", "../src/media"]
+  "include": [".", "../api", "../src/media", "../src/search/taxonomy.ts", "../src/search/bundle.ts", "../src/search/engine.ts"]
 }

@@ -8,6 +8,11 @@
 //   POST     …?uploadId=…              complete with { parts }
 //   DELETE   …?uploadId=…              abort
 //
+//   GET      /media/search/<hash>.json|.vec   the search index (immutable)
+//   GET      /media/search/manifest.json      points at the current index; not
+//                                             cached, and the admin token may
+//                                             replace it (scripts/search-index.ts)
+//
 // Writes need `Authorization: Bearer <token>`: a Supabase access token
 // (checked against Supabase Auth) or the admin token the library upload
 // script uses. Keys are content hashes, so an existing object is never
@@ -22,6 +27,8 @@ export interface Env {
 }
 
 const KEY = /^media\/[0-9a-f]{16}\/(l0\.trl0|l1\.mp4|l2\.mp4|original\.[a-z0-9]{1,8})$/;
+const SEARCH_KEY = /^media\/search\/([0-9a-f]{16}\.(json|vec)|manifest\.json)$/;
+const MANIFEST = 'media/search/manifest.json';
 const MAX_PUT = 95 * 1024 * 1024;
 const IMMUTABLE = 'public, max-age=31536000, immutable';
 
@@ -45,6 +52,8 @@ const TYPES: Record<string, string> = {
   webp: 'image/webp',
   avif: 'image/avif',
   trl0: 'application/octet-stream',
+  json: 'application/json',
+  vec: 'application/octet-stream',
 };
 
 function json(body: unknown, status = 200): Response {
@@ -94,7 +103,9 @@ async function serve(req: Request, env: Env, ctx: ExecutionContext, key: string)
   const cache = caches.default;
   const cacheKey = new Request(new URL(req.url).origin + '/' + key);
   const ranged = req.headers.has('Range');
-  if (!ranged) {
+  // The manifest changes when the index is rebuilt; everything else is immutable.
+  const mutable = key === MANIFEST;
+  if (!ranged && !mutable) {
     const hit = await cache.match(cacheKey);
     if (hit) return req.method === 'HEAD' ? new Response(null, hit) : hit;
   }
@@ -103,7 +114,7 @@ async function serve(req: Request, env: Env, ctx: ExecutionContext, key: string)
   const headers = new Headers(CORS);
   obj.writeHttpMetadata(headers);
   headers.set('Content-Type', contentType(key));
-  headers.set('Cache-Control', IMMUTABLE);
+  headers.set('Cache-Control', mutable ? 'no-cache' : IMMUTABLE);
   headers.set('ETag', obj.httpEtag);
   headers.set('Accept-Ranges', 'bytes');
   if (!('body' in obj)) return new Response(null, { status: 304, headers });
@@ -119,7 +130,7 @@ async function serve(req: Request, env: Env, ctx: ExecutionContext, key: string)
     headers.set('Content-Length', String(obj.size));
   }
   const res = new Response(req.method === 'HEAD' ? null : obj.body, { status, headers });
-  if (status === 200 && req.method === 'GET') ctx.waitUntil(cache.put(cacheKey, res.clone()));
+  if (status === 200 && req.method === 'GET' && !mutable) ctx.waitUntil(cache.put(cacheKey, res.clone()));
   return res;
 }
 
@@ -127,7 +138,7 @@ async function serve(req: Request, env: Env, ctx: ExecutionContext, key: string)
 
 async function write(req: Request, env: Env, key: string, user: string, url: URL): Promise<Response> {
   const uploadId = url.searchParams.get('uploadId');
-  const meta = { httpMetadata: { contentType: contentType(key), cacheControl: IMMUTABLE }, customMetadata: { uploadedBy: user } };
+  const meta = { httpMetadata: { contentType: contentType(key), cacheControl: key === MANIFEST ? 'no-cache' : IMMUTABLE }, customMetadata: { uploadedBy: user } };
 
   if (req.method === 'POST' && url.searchParams.has('uploads')) {
     if (await env.MEDIA.head(key)) return json({ exists: true });
@@ -152,8 +163,9 @@ async function write(req: Request, env: Env, key: string, user: string, url: URL
     }
   }
   if (req.method === 'PUT') {
-    // Content-addressed: the same key always holds the same bytes.
-    if (await env.MEDIA.head(key)) return json({ exists: true });
+    // Content-addressed: the same key always holds the same bytes. The
+    // search manifest is the one key that gets replaced.
+    if (key !== MANIFEST && (await env.MEDIA.head(key))) return json({ exists: true });
     const length = Number(req.headers.get('Content-Length') ?? NaN);
     if (!req.body || !(length > 0)) return error(411, 'length required');
     if (length > MAX_PUT) return error(413, 'too large for one request; use a multipart upload');
@@ -169,10 +181,13 @@ export default {
     const url = new URL(req.url);
     if (url.pathname === '/') return new Response('codex-motion media\n', { headers: CORS });
     const key = decodeURIComponent(url.pathname.slice(1));
-    if (!KEY.test(key)) return error(404, 'not found');
+    const search = SEARCH_KEY.test(key);
+    if (!KEY.test(key) && !search) return error(404, 'not found');
     if (req.method === 'GET' || req.method === 'HEAD') return serve(req, env, ctx, key);
     const user = await authorise(req, env);
     if (!user) return error(401, 'sign in to upload');
+    // Only the index builder writes the search index.
+    if (search && user !== 'admin') return error(403, 'admin only');
     return write(req, env, key, user, url);
   },
 } satisfies ExportedHandler<Env>;

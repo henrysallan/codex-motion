@@ -13,6 +13,7 @@
     "scrape": "node scripts/scrape.ts",
     "tag": "node scripts/tag.ts",
     "embed": "node scripts/embed.ts",
+    "index": "node scripts/search-index.ts",
     "test": "node --test 'scripts/test/*.test.ts'",
     "upload:library": "node --env-file=.env.local scripts/upload-library.ts --sql supabase/seed-library.sql"
   },

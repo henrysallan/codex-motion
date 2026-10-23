@@ -56,7 +56,7 @@ const HELP = `Usage: npm run scrape -- <url> [options]
   --max-height <px>      download player-hosted videos at up to this height (default 1080)
   --downloads <n>        parallel downloads (default 4)
   --budget-gb <n>        stop downloading once this run has fetched n GB
-  --build                then build proxies, embeddings and (with a key) visual tags,
+  --build                then build proxies, embeddings, (with a key) visual tags and the search index,
                          adding the videos to the library
   --concurrency <n>      parallel page fetches (default 4)
 
@@ -535,9 +535,11 @@ if (flags.build && !dryRun && stats.downloaded) {
   if (status === 0) status = step('embed.ts');
   if (status === 0 && hasCredentials()) status = step('tag.ts', '--only', host);
   else if (status === 0) log('  tags skipped: set ANTHROPIC_API_KEY to tag clips (npm run tag)');
+  // Search sees new clips once the index is rebuilt from all of the above.
+  if (status === 0) status = step('search-index.ts');
   process.exitCode = status;
 } else if (!dryRun && stats.downloaded) {
-  log(`  next: FFMPEG=/path/to/ffmpeg npm run build:proxies -- --in ${rel} --merge, then npm run embed and npm run tag`);
+  log(`  next: FFMPEG=/path/to/ffmpeg npm run build:proxies -- --in ${rel} --merge, then npm run embed, npm run tag and npm run index`);
 }
 
 function plural(n: number, word: string): string {

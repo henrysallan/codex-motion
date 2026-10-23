@@ -6,6 +6,8 @@ import './styles/shell.css';
 import './styles/collections.css';
 import './styles/feed.css';
 import './styles/canvas.css';
+import './styles/comments.css';
+import './styles/detail.css';
 import { createRoot } from 'react-dom/client';
 import { App } from './app/App.tsx';
 import { engine } from './app/engine.ts';

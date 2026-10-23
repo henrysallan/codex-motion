@@ -1,6 +1,7 @@
 // The pill bar: the view pill (Collections and Feed toggles), then one tab
 // per open collection, then global controls. On a public collection page:
-// its title and owner instead.
+// its title and owner instead, and the viewer's account once they sign in
+// to comment.
 
 import { Crosshair, LayoutGrid, LogOut, Monitor, Moon, Pause, Play, Sparkles, Sun, X } from 'lucide-react';
 import { useState } from 'react';
@@ -9,6 +10,7 @@ import { signOut } from '../data/supabase.ts';
 import { useSyncStatus } from '../data/sync.ts';
 import { IconButton } from '../ui/controls.tsx';
 import { Menu, useMenu } from '../ui/popover.tsx';
+import { useComments } from './comments/state.ts';
 import {
   activateTab,
   closeTab,
@@ -45,8 +47,37 @@ function PublicTopBar() {
         <a className="btn secondary sm" href="/">
           codex-motion
         </a>
+        <PublicAccount />
       </div>
     </header>
+  );
+}
+
+// Signed in on someone's published board: who comments will be from.
+function PublicAccount() {
+  const me = useComments((s) => s.me);
+  const menu = useMenu();
+  if (!me) return null;
+  return (
+    <>
+      <button type="button" className="account" title={me.name} onClick={(e) => menu.toggle(e.currentTarget)}>
+        {me.avatarUrl ? (
+          <img className="avatar" src={me.avatarUrl} alt="" referrerPolicy="no-referrer" />
+        ) : (
+          <span className="avatar" style={{ background: me.color }}>
+            {me.name.slice(0, 1).toUpperCase()}
+          </span>
+        )}
+      </button>
+      {menu.anchor && (
+        <Menu
+          anchor={menu.anchor}
+          align="end"
+          onClose={menu.close}
+          items={[{ title: me.name }, { label: 'Sign out', icon: <LogOut size={14} />, onSelect: () => void signOut() }]}
+        />
+      )}
+    </>
   );
 }
 
