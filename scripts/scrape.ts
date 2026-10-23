@@ -469,7 +469,7 @@ if (enrich) {
   const byPage = new Map<string, PageVideos>();
   for (const item of items) {
     const meta = metas.get(item.page.url);
-    if (!meta || item.status === 'failed') continue;
+    if (!meta || item.status === 'failed' || item.status === 'skipped') continue;
     const entry = byPage.get(item.page.url) ?? { url: item.page.url, meta, items: [] };
     entry.items.push(item);
     byPage.set(item.page.url, entry);

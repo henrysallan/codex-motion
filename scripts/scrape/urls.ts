@@ -117,6 +117,9 @@ export function classifyMedia(href: string, base?: string): MediaRef | null {
   if (vimeoFile) return { kind: 'file', provider: 'vimeo', key: `vimeo:${vimeoFile[1] ?? vimeoFile[2]}`, url: u.toString() };
 
   if (SEGMENT.test(path)) return null;
+  // Mux's per-rendition playlists (one per quality and one for audio) hang
+  // off a master on stream.mux.com that the player always loads first.
+  if (/^manifest-[\w-]+\.(fastly\.)?mux\.com$/.test(host)) return null;
   // An image CDN rendering a still of the video (imgix/Sanity ?fm=jpg).
   if (/^(jpe?g|pjpg|png|webp|avif|gif)$/i.test(u.searchParams.get('fm') ?? '')) return null;
   if (STREAM_EXT.test(path)) {

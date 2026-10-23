@@ -30,6 +30,7 @@ test('classifies files, streams and players', () => {
   assert.equal(classifyMedia('https://vimeo.com/studioname'), null);
   assert.equal(classifyMedia('https://i.vimeocdn.com/video/123456789-abc_640.jpg'), null);
   assert.equal(classifyMedia('https://cdn.example/hls/seg-12-v1-a1.ts'), null);
+  assert.equal(classifyMedia('https://manifest-oci-us-ashburn-1-vop1.fastly.mux.com/lznd6vfCC9nyGJ29/rendition.m3u8?cdn=fastly'), null);
   assert.equal(classifyMedia('https://vod-adaptive-ak.vimeocdn.com/exp=1/range/prot/abc/avf/def.mp4?pathsig=x'), null);
 });
 

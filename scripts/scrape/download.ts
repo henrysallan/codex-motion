@@ -180,6 +180,7 @@ function run(cmd: string, args: string[], timeoutMs: number): Promise<{ code: nu
 }
 
 const lastError = (stderr: string) =>
+  /blocked due to its TLS fingerprint/.test(stderr) ? 'Vimeo is refusing automated requests from this machine for now (bot protection); retry later' :
   stderr
     .split('\n')
     .filter((l) => /ERROR/.test(l))
@@ -192,6 +193,21 @@ function ytdlpArgs(referer: string): string[] {
 }
 
 // Players and HLS/DASH: best video plus best audio, merged by ffmpeg.
+// One Vimeo request at a time, a couple of seconds apart: Vimeo blocks
+// clients that hammer it (after a few thousand requests in a day it began
+// refusing this tool's TLS fingerprint outright, which we don't work around).
+const VIMEO_GAP_MS = 2000;
+let vimeoTurn = Promise.resolve();
+function paced<T>(url: string, task: () => Promise<T>): Promise<T> {
+  if (!/(^|\.)vimeo\.com$/.test(new URL(url).hostname)) return task();
+  const run = vimeoTurn.then(task);
+  vimeoTurn = run.then(
+    () => new Promise((r) => setTimeout(r, VIMEO_GAP_MS)),
+    () => new Promise((r) => setTimeout(r, VIMEO_GAP_MS)),
+  );
+  return run;
+}
+
 async function ytdlp(url: string, referer: string, tmp: string, opts: DownloadOptions): Promise<Got> {
   const args = [
     ...ytdlpArgs(referer),
@@ -210,7 +226,7 @@ async function ytdlp(url: string, referer: string, tmp: string, opts: DownloadOp
     ...(process.env.FFMPEG ? ['--ffmpeg-location', process.env.FFMPEG] : []),
     url,
   ];
-  const r = await run(YTDLP, args, 30 * 60_000);
+  const r = await paced(url, () => run(YTDLP, args, 30 * 60_000));
   const infoPath = path.join(tmp, 'media.info.json');
   const info = fs.existsSync(infoPath) ? (JSON.parse(fs.readFileSync(infoPath, 'utf8')) as Record<string, unknown>) : undefined;
   const file = fs.readdirSync(tmp).find((f) => f.startsWith('media.') && !/\.(json|part|ytdl)$/.test(f) && !/\.f[\w-]+\.\w+$/.test(f));
@@ -234,7 +250,7 @@ async function check(item: ScrapedItem, url: string, kind: string, referer: stri
     Object.assign(item.media, { ...(type ? { contentType: type } : {}), ...(bytes ? { bytes } : {}), ...(res.headers.get('last-modified') ? { lastModified: res.headers.get('last-modified')! } : {}) });
     return;
   }
-  const r = await run(YTDLP, [...ytdlpArgs(referer), '--skip-download', '--dump-single-json', '--no-warnings', url], 120_000);
+  const r = await paced(url, () => run(YTDLP, [...ytdlpArgs(referer), '--skip-download', '--dump-single-json', '--no-warnings', url], 120_000));
   if (r.code !== 0) throw new Error(lastError(r.stderr) ?? `yt-dlp exited ${r.code}`);
   const info = JSON.parse(r.stdout) as Record<string, unknown>;
   applyEmbedInfo(item, info);
