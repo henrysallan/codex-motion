@@ -167,7 +167,10 @@ store (IndexedDB) + undo            scheduler: one decoder budget       encode L
   about 100 KB), a 480p L1 and a 1080p L2 (H.264, 1 s closed GOP, no B-frames).
   The scheduler picks a tier from each clip's on-screen height, ranks clips by
   visible area, and grants L1/L2 decoders until the budget runs out. On a
-  board, L0 is always resident, so a tile is never blank.
+  board, L0 is always resident, so a tile is never blank. While a scrolling
+  pane moves faster than 1.5 viewports a second, its clips start no new
+  video: a tile would be gone before its stream started, and the downloads
+  would hold up sprite loads. Video resumes as soon as it slows.
 - **Sprite residency.** The L0 atlas is a cache: each layer is cut into
   fixed one-frame cells per frame width, so any sprite can be evicted and its
   cells reused. Scrolling panes (Feed, Collections) load sprites only for

@@ -9,6 +9,8 @@
 // view in the pan direction get leftover budget so they are already
 // decoding when they arrive. Holders get a bonus so two similar items don't
 // trade a decoder back and forth. A focused item takes its original first.
+// While a scrolling pane moves fast, its items start no new video: they keep
+// what they hold, and promotion resumes once it slows.
 
 import type { EngineSettings } from './protocol.ts';
 
@@ -36,6 +38,10 @@ export interface Slot {
   focused: boolean;
   // No sprite yet (an upload mid-ingest): only video can show anything.
   needsVideo: boolean;
+  // Its view is a scrolling pane moving fast: a new stream would download
+  // and start after the item has gone, and its download would hold up sprite
+  // loads. The item keeps the tier it has but goes no higher.
+  fastScroll: boolean;
 }
 
 const HYSTERESIS = 0.85;
@@ -52,6 +58,7 @@ function wants(s: Slot, settings: EngineSettings): Tier {
   }
   if (s.needsVideo && tier === 0) tier = 1;
   if (s.blocked !== null && tier >= s.blocked) tier = (s.blocked - 1) as Tier;
+  if (s.fastScroll && tier > s.current) tier = s.current;
   return tier;
 }
 
