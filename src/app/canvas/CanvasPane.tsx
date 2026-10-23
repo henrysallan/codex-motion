@@ -152,9 +152,7 @@ export function CanvasPane({ collectionId }: { collectionId: string }) {
         label: 'Add note here',
         icon: <StickyNote size={15} />,
         trail: 'N',
-        onSelect: () => {
-          ctrl.setTool('note');
-        },
+        onSelect: () => ctrl.placeNoteAtClient(menu.x, menu.y),
       },
       { label: 'Fit all', icon: <Maximize size={15} />, trail: 'F', onSelect: () => ctrl.fitAll() },
     ];

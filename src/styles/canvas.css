@@ -52,12 +52,20 @@
   cursor: crosshair;
 }
 
-.board-host[data-handle='0'] {
+/* Handles overhang notes, so the cursor shows over them too. */
+.board-host[data-handle='0'],
+.board-host[data-handle='0'] .note:not(.editing) {
   cursor: nwse-resize;
 }
 
-.board-host[data-handle='1'] {
+.board-host[data-handle='1'],
+.board-host[data-handle='1'] .note:not(.editing) {
   cursor: nesw-resize;
+}
+
+.board-host[data-handle='x'],
+.board-host[data-handle='x'] .note:not(.editing) {
+  cursor: ew-resize;
 }
 
 .board-host.moving {

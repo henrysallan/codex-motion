@@ -48,7 +48,22 @@ type Gesture =
   | { kind: 'pan'; pointerId: number; x: number; y: number }
   | { kind: 'marquee'; pointerId: number; x0: number; y0: number; x1: number; y1: number; base: Set<string> }
   | { kind: 'move'; pointerId: number; sx: number; sy: number; wx: number; wy: number; originals: Map<string, Rect>; moved: boolean; bbox: Rect }
-  | { kind: 'resize'; pointerId: number; corner: number; box: Rect; originals: Map<string, Rect> };
+  | {
+      kind: 'resize';
+      pointerId: number;
+      corner: number;
+      box: Rect;
+      originals: Map<string, Rect>;
+      // Grabbed corner minus the press point, in world units, so the corner
+      // doesn't jump to the pointer on the first move.
+      grab: [number, number];
+      minScale: number;
+      // Notes reflow rather than scale, so a notes-only selection resizes
+      // its width.
+      widthOnly: boolean;
+    }
+  // Note tool press; the note is placed on release.
+  | { kind: 'note'; pointerId: number };
 
 interface FlyIn {
   from: Rect;
@@ -60,6 +75,9 @@ const SNAP = 16;
 const MOVE_THRESHOLD_PX = 3;
 const FLY_MS = 320;
 const NOTE_FALLBACK_H = 80;
+// Resizing stops shrinking at these, in world units.
+const MIN_CLIP_SIDE = 24;
+const MIN_NOTE_W = 80;
 const CAMERA_KEY = 'trace.camera.';
 
 export class BoardController {
@@ -237,12 +255,18 @@ export class BoardController {
 
   private boxOf(id: string): Rect | null {
     const live = this.live.get(id);
-    if (live) return live;
+    // A note is as tall as its text, whatever width a gesture gives it.
+    if (live) return this.notes.has(id) ? { ...live, h: this.noteHeight(id) } : live;
     const p = this.placements.get(id);
     if (p) return p;
     const n = this.notes.get(id);
     if (n) return { x: n.x, y: n.y, w: n.w, h: this.noteHeight(id) };
     return null;
+  }
+
+  private notesOnly(): boolean {
+    for (const id of this.selection) if (!this.notes.has(id)) return false;
+    return this.selection.size > 0;
   }
 
   private noteHeight(id: string): number {
@@ -445,6 +469,17 @@ export class BoardController {
     return null;
   }
 
+  // Notes draw above clips, so they win where the two overlap.
+  private noteAt(sx: number, sy: number): string | null {
+    const [wx, wy] = this.camera.toWorld(sx, sy);
+    let top: Note | null = null;
+    for (const n of this.notes.values()) {
+      const b = this.boxOf(n.id)!;
+      if (wx >= b.x && wx < b.x + b.w && wy >= b.y && wy < b.y + b.h && (!top || n.z > top.z)) top = n;
+    }
+    return top?.id ?? null;
+  }
+
   private handleAt(sx: number, sy: number): number {
     if (this.focusId) return -1;
     const b = this.selectionBounds();
@@ -487,13 +522,20 @@ export class BoardController {
     if (e.button !== 0 || space.down || this.tool === 'hand' || this.readonly) return;
     e.stopPropagation();
     this.host.focus({ preventScroll: true });
+    // Selection handles straddle the note's corners.
+    const p = this.local(e);
+    const corner = this.handleAt(p.x, p.y);
+    if (corner >= 0) {
+      this.beginResize(e, corner, p);
+      return;
+    }
     this.selectFor(id, e.shiftKey || e.metaKey || e.ctrlKey);
-    this.beginMove(e, this.local(e));
+    this.beginMove(e, p);
   }
 
   private onPointerDown = (e: PointerEvent) => {
     // Notes handle their own presses (React runs after this native listener).
-    if (e.button === 2 || isInNote(e.target)) return;
+    if (e.button === 2 || noteIdOf(e.target)) return;
     this.host.focus({ preventScroll: true });
     cancelAnimationFrame(this.cameraAnim);
     const p = this.local(e);
@@ -514,11 +556,7 @@ export class BoardController {
     }
     const corner = this.handleAt(p.x, p.y);
     if (corner >= 0) {
-      this.host.setPointerCapture(e.pointerId);
-      const box = this.selectionBounds()!;
-      const originals = new Map<string, Rect>();
-      for (const id of this.selection) originals.set(id, { ...this.boxOf(id)! });
-      this.gesture = { kind: 'resize', pointerId: e.pointerId, corner, box, originals };
+      this.beginResize(e, corner, p);
       return;
     }
     const hit = this.hitTest(p.x, p.y);
@@ -528,11 +566,10 @@ export class BoardController {
       return;
     }
     if (this.tool === 'note') {
-      const [wx, wy] = this.camera.toWorld(p.x, p.y);
-      const n = addNote(this.collectionId, { x: wx, y: wy });
-      setSelection([n.id]);
-      this.setTool('select');
-      this.cb.onEditNote(n.id);
+      // Placing it now would lose the note's focus to the press's own
+      // focus change, and an empty note deletes itself on blur.
+      this.host.setPointerCapture(e.pointerId);
+      this.gesture = { kind: 'note', pointerId: e.pointerId };
       return;
     }
     // Marquee on empty board.
@@ -548,6 +585,23 @@ export class BoardController {
     const s = useStore.getState().selection;
     if (toggle) setSelection(s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
     else if (!s.includes(id)) setSelection([id]);
+  }
+
+  private beginResize(e: PointerEvent | React.PointerEvent, corner: number, p: { x: number; y: number }): void {
+    this.host.setPointerCapture(e.pointerId);
+    const box = this.selectionBounds()!;
+    const originals = new Map<string, Rect>();
+    let minScale = 0;
+    for (const id of this.selection) {
+      const o = { ...this.boxOf(id)! };
+      originals.set(id, o);
+      minScale = Math.max(minScale, this.notes.has(id) ? MIN_NOTE_W / o.w : MIN_CLIP_SIDE / Math.min(o.w, o.h));
+    }
+    const [wx, wy] = this.camera.toWorld(p.x, p.y);
+    const [cx, cy] = corners(box)[corner];
+    this.gesture = { kind: 'resize', pointerId: e.pointerId, corner, box, originals, grab: [cx - wx, cy - wy], minScale, widthOnly: this.notesOnly() };
+    this.setHover(null);
+    engine.scrub(null);
   }
 
   private beginMove(e: PointerEvent | React.PointerEvent, p: { x: number; y: number }): void {
@@ -610,16 +664,21 @@ export class BoardController {
       return;
     }
     if (g.kind === 'resize') {
-      const { box } = g;
-      const pts = corners(box);
+      const pts = corners(g.box);
       const [ax, ay] = pts[(g.corner + 2) % 4];
       const [cx, cy] = pts[g.corner];
-      let s = Math.max(Math.abs(wx - ax) / Math.abs(cx - ax || 1), Math.abs(wy - ay) / Math.abs(cy - ay || 1));
-      // Keep the smallest item at least 24 units on its short side.
-      const minSide = Math.min(...[...g.originals.values()].map((o) => Math.min(o.w, o.h)));
-      s = Math.max(s, 24 / Math.max(1, minSide));
+      const dx = cx - ax;
+      const dy = cy - ay;
+      // Where the grabbed corner wants to be.
+      const tx = wx + g.grab[0];
+      const ty = wy + g.grab[1];
+      // Scaling keeps the box's aspect, so the corner can only move along its
+      // diagonal; put it at the point there nearest the pointer. Past the
+      // anchor this goes negative and the minimum takes over.
+      const raw = g.widthOnly ? (tx - ax) / dx : ((tx - ax) * dx + (ty - ay) * dy) / (dx * dx + dy * dy);
+      const s = Math.max(raw, g.minScale);
       for (const [id, o] of g.originals) {
-        this.live.set(id, { x: ax + (o.x - ax) * s, y: ay + (o.y - ay) * s, w: o.w * s, h: o.h * s });
+        this.live.set(id, g.widthOnly ? { ...o, x: ax + (o.x - ax) * s, w: o.w * s } : { x: ax + (o.x - ax) * s, y: ay + (o.y - ay) * s, w: o.w * s, h: o.h * s });
       }
       this.pushItems();
       this.pushOverlay();
@@ -639,6 +698,11 @@ export class BoardController {
       if (hit && !e.shiftKey && !e.metaKey && !e.ctrlKey && sel.length > 1) setSelection([hit.id]);
     }
     if ((g.kind === 'move' && g.moved) || g.kind === 'resize') this.commitLive();
+    if (g.kind === 'note' && e.type === 'pointerup') {
+      const p = this.local(e);
+      this.setTool('select');
+      this.placeNote(p.x, p.y);
+    }
     this.live.clear();
     this.sync();
     this.updateHover();
@@ -664,26 +728,41 @@ export class BoardController {
   }
 
   private onDoubleClick = (e: MouseEvent) => {
-    if (isInNote(e.target)) return;
+    // Double-clicks inside a note being edited select words.
+    if ((e.target as HTMLElement).isContentEditable) return;
     const p = this.local(e);
+    // A press on a note captures the pointer, which retargets the dblclick
+    // to the host, so find the note by position too.
+    const noteId = noteIdOf(e.target) ?? this.noteAt(p.x, p.y);
+    if (noteId) {
+      if (!this.focusId && !this.readonly) this.cb.onEditNote(noteId);
+      return;
+    }
     const hit = this.hitTest(p.x, p.y);
     if (hit) {
       if (this.focusId === hit.id) this.exitFocus();
       else this.enterFocus(hit.id);
-    } else if (!this.focusId && !this.readonly) {
-      const [wx, wy] = this.camera.toWorld(p.x, p.y);
-      const n = addNote(this.collectionId, { x: wx, y: wy });
-      setSelection([n.id]);
-      this.cb.onEditNote(n.id);
-    }
+    } else if (!this.focusId && !this.readonly) this.placeNote(p.x, p.y);
   };
+
+  // Adds an empty note at a pane-relative point and starts editing it.
+  placeNote(sx: number, sy: number): void {
+    const [wx, wy] = this.camera.toWorld(sx, sy);
+    const n = addNote(this.collectionId, { x: wx, y: wy });
+    setSelection([n.id]);
+    this.cb.onEditNote(n.id);
+  }
+
+  placeNoteAtClient(clientX: number, clientY: number): void {
+    const p = this.local({ clientX, clientY });
+    this.placeNote(p.x, p.y);
+  }
 
   private onContextMenu = (e: MouseEvent) => {
     e.preventDefault();
     if (this.readonly) return;
     const p = this.local(e);
-    const noteId = (e.target as HTMLElement).closest?.<HTMLElement>('[data-note]')?.dataset.note ?? null;
-    const id = noteId ?? this.hitTest(p.x, p.y)?.id ?? null;
+    const id = noteIdOf(e.target) ?? this.hitTest(p.x, p.y)?.id ?? null;
     if (id && !this.selection.has(id)) setSelection([id]);
     this.cb.onContextMenu(e.clientX, e.clientY, id);
   };
@@ -696,7 +775,7 @@ export class BoardController {
     const hit = this.hitTest(this.pointer.x, this.pointer.y);
     this.setHover(hit?.id ?? null);
     const corner = this.handleAt(this.pointer.x, this.pointer.y);
-    this.host.dataset.handle = corner < 0 ? '' : String(corner % 2);
+    this.host.dataset.handle = corner < 0 ? '' : this.notesOnly() ? 'x' : String(corner % 2);
     if (hit && useStore.getState().scrubOnHover) {
       const [wx] = this.camera.toWorld(this.pointer.x, this.pointer.y);
       engine.scrub(hit.assetId, Math.min(0.9999, Math.max(0, (wx - hit.x) / hit.w)));
@@ -945,8 +1024,8 @@ export class BoardController {
   }
 }
 
-function isInNote(t: EventTarget | null): boolean {
-  return t instanceof Element && !!t.closest('[data-note]');
+function noteIdOf(t: EventTarget | null): string | null {
+  return (t instanceof Element && t.closest<HTMLElement>('[data-note]')?.dataset.note) || null;
 }
 
 function corners(b: Rect): [number, number][] {

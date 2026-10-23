@@ -1,6 +1,6 @@
 // Text notes on the board. They're DOM (text editing for free) inside a
-// layer the controller transforms with the camera; presses go to the
-// controller so notes select, move and marquee like clips.
+// layer the controller transforms with the camera; presses and double-clicks
+// go to the controller so notes select, move, marquee and edit like clips.
 
 import { useEffect, useMemo, useRef } from 'react';
 import type { Note } from '../../data/model.ts';
@@ -37,7 +37,6 @@ export function NotesLayer({
             }
             ctrl?.pointerDownOnNote(e, n.id);
           }}
-          onEdit={() => setEditing(n.id)}
           onDone={(text) => {
             setEditing(null);
             if (!text.trim()) deleteItems(collectionId, [n.id]);
@@ -54,14 +53,12 @@ function NoteCard({
   selected,
   editing,
   onPointerDown,
-  onEdit,
   onDone,
 }: {
   note: Note;
   selected: boolean;
   editing: boolean;
   onPointerDown: (e: React.PointerEvent) => void;
-  onEdit: () => void;
   onDone: (text: string) => void;
 }) {
   const text = useRef<HTMLDivElement>(null);
@@ -83,10 +80,6 @@ function NoteCard({
       data-note={note.id}
       style={{ left: note.x, top: note.y, width: note.w, zIndex: note.z }}
       onPointerDown={onPointerDown}
-      onDoubleClick={(e) => {
-        e.stopPropagation();
-        onEdit();
-      }}
     >
       <div
         ref={text}
