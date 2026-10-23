@@ -117,6 +117,8 @@ export function classifyMedia(href: string, base?: string): MediaRef | null {
   if (vimeoFile) return { kind: 'file', provider: 'vimeo', key: `vimeo:${vimeoFile[1] ?? vimeoFile[2]}`, url: u.toString() };
 
   if (SEGMENT.test(path)) return null;
+  // An image CDN rendering a still of the video (imgix/Sanity ?fm=jpg).
+  if (/^(jpe?g|pjpg|png|webp|avif|gif)$/i.test(u.searchParams.get('fm') ?? '')) return null;
   if (STREAM_EXT.test(path)) {
     const hosted = HOSTED_STREAMS.find(([, p]) => p.test(rest));
     if (hosted) return { kind: 'stream', provider: hosted[0], key: `${hosted[0]}:${hosted[1].exec(rest)![1]}`, url: u.toString() };

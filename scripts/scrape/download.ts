@@ -130,7 +130,7 @@ async function downloadFile(url: string, referer: string, tmp: string, maxBytes:
     throw new Error(`HTTP ${res.status}`);
   }
   const contentType = res.headers.get('content-type') ?? '';
-  if (/text\/|json|xml/i.test(contentType)) {
+  if (/^(text|image)\/|json|xml/i.test(contentType)) {
     await res.body.cancel();
     throw new Error(`not a video (${contentType})`);
   }

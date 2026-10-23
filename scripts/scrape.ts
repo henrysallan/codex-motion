@@ -303,8 +303,11 @@ const rendered = await renderPass();
 
 function suspects(): { url: string; why: string[] }[] {
   const out: { url: string; why: string[] }[] = [];
+  const withMore = [...signals.values()].filter((s) => s.moreButton).length;
+  const moreEverywhere = signals.size >= 10 && withMore / signals.size > 0.3;
+  const listing = normalizePage(root!.toString());
   for (const [url, s] of signals) {
-    const why = agentReasons(s, keysOn(url).size);
+    const why = agentReasons(s, keysOn(url).size, { moreIsChrome: moreEverywhere && url !== listing });
     if (why.length) out.push({ url, why });
   }
   return out;

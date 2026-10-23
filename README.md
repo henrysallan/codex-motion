@@ -40,20 +40,20 @@ npm install
 ```
 
 ```bash
-FFMPEG=/path/to/ffmpeg npm run gen:clips        # 200 synthetic 1080p clips -> media/sources (~75 s)
-```
-
-```bash
-FFMPEG=/path/to/ffmpeg npm run build:proxies    # L0/L1/L2 ladder -> public/media (~150 s)
-```
-
-```bash
 npm run dev
 ```
 
-To use real reference instead, drop `.mp4`/`.mov`/`.webm` files in a folder and
-run `npm run build:proxies -- --in path/to/folder`. Re-runs only process new
-files; assets are keyed by content hash.
+The library is scraped reference (see below). To fill a fresh checkout,
+scrape a site, or drop `.mp4`/`.mov`/`.webm` files in a folder and run
+`npm run build:proxies -- --in path/to/folder --merge`. Re-runs only process
+new files; assets are keyed by content hash. For a synthetic benchmark
+library (the M0 gate), `npm run gen:clips` makes 200 test clips in
+`media/sources` to build the same way.
+
+With `VITE_SUPABASE_*` set the app signs in and reads the shared library
+from Supabase and R2; `npm run upload:library` pushes `public/media`'s
+proxies to R2 (multipart for files over 90 MB) and writes the SQL that
+registers them. Leave those variables empty to run fully local.
 
 ### Scraping a site
 
@@ -72,7 +72,8 @@ proxies and adds them to the library (and so the Feed) without dropping what
 is already there; `--build` on the scrape does that and then the analysis
 passes below. A path in the URL
 (`/work`) puts that section's pages first; the rest of the site is still
-crawled, up to `--max-pages`.
+crawled, up to `--max-pages`. `--budget-gb` caps what one run downloads,
+earliest-crawled pages first.
 
 It works in three tiers and only reaches for the next one when the last one
 left signs of more:

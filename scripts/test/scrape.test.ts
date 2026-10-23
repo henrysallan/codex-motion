@@ -217,3 +217,14 @@ test('upload file names are not titles', () => {
   for (const t of ['_Copilot_HumanistAI_CS_01_Hero', 'NIKE_AIR_final_v3', 'reel_1080p', 'Aithyra_Brand-Video_1920x1080', '14', 'clip.mp4']) assert.equal(looksLikeFilename(t), true, t);
   for (const t of ['OpenAI DevDay25 - The global event for developers', 'Utah Jazz', 'a.s.r. insurances']) assert.equal(looksLikeFilename(t), false, t);
 });
+
+test('image renders of a video are not videos', () => {
+  assert.equal(classifyMedia('https://pentagram-production.imgix.net/77c6b208/Xsolla_02.mp4?auto=compress%2Cformat&fm=jpg&w=2000&s=abc'), null);
+  assert.equal(classifyMedia('https://pentagram-production.imgix.net/77c6b208/Xsolla_02.mp4?auto=compress')?.kind, 'file');
+});
+
+test('a "Load more" on every page is site chrome, except on the listing', () => {
+  const s: PageSignals = { videoTags: 0, unresolvedVideos: 0, playerHints: 0, moreButton: true, textLength: 500, scripts: 2, shell: false };
+  assert.deepEqual(agentReasons(s, 3, { moreIsChrome: true }), []);
+  assert.equal(agentReasons(s, 3).length, 1);
+});

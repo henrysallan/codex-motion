@@ -40,17 +40,45 @@ async function retry<T>(what: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
+// One request carries up to the Worker's 95 MB; bigger proxies (long films)
+// go up in parts through its multipart API.
+const SINGLE_MAX = 90e6;
+const PART = 50e6;
+const auth = { Authorization: `Bearer ${token}` };
+
+async function ok(res: Response): Promise<Response> {
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${await res.text()}`);
+  return res;
+}
+
+async function uploadMultipart(url: string, file: string): Promise<void> {
+  const { uploadId, exists } = (await (await ok(await fetch(`${url}?uploads`, { method: 'POST', headers: auth }))).json()) as { uploadId?: string; exists?: boolean };
+  if (exists || !uploadId) return;
+  const blob = await fs.openAsBlob(file);
+  const parts: unknown[] = [];
+  try {
+    for (let n = 1, at = 0; at < blob.size; n++, at += PART) {
+      const body = blob.slice(at, Math.min(blob.size, at + PART));
+      const q = `uploadId=${encodeURIComponent(uploadId)}&partNumber=${n}`;
+      parts.push(await retry(`${file} part ${n}`, async () => (await ok(await fetch(`${url}?${q}`, { method: 'PUT', body, headers: auth }))).json()));
+    }
+    await ok(await fetch(`${url}?uploadId=${encodeURIComponent(uploadId)}`, { method: 'POST', body: JSON.stringify({ parts }), headers: { ...auth, 'Content-Type': 'application/json' } }));
+  } catch (e) {
+    await fetch(`${url}?uploadId=${encodeURIComponent(uploadId)}`, { method: 'DELETE', headers: auth }).catch(() => {});
+    throw e;
+  }
+}
+
 await pool(files, 6, async (key) => {
   const url = `${base}/${key}`;
   const head = await retry(key, () => fetch(url, { method: 'HEAD' }));
   if (head.ok) skipped++;
   else {
     const file = path.join(publicDir, key);
-    await retry(key, async () => {
-      const res = await fetch(url, { method: 'PUT', body: await fs.openAsBlob(file), headers: { Authorization: `Bearer ${token}` } });
-      if (!res.ok) throw new Error(`HTTP ${res.status} ${await res.text()}`);
-    });
-    sent += fs.statSync(file).size;
+    const size = fs.statSync(file).size;
+    if (size > SINGLE_MAX) await retry(key, () => uploadMultipart(url, file));
+    else await retry(key, async () => void (await ok(await fetch(url, { method: 'PUT', body: await fs.openAsBlob(file), headers: auth }))));
+    sent += size;
   }
   done++;
   if (done % 25 === 0 || done === files.length) {
