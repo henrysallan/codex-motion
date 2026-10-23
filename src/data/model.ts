@@ -5,7 +5,7 @@
 import type { Asset } from '../media/library.ts';
 
 export interface AssetRecord extends Asset {
-  origin: 'library' | 'upload';
+  origin: 'library' | 'upload' | 'scraper';
   status: 'ready' | 'processing' | 'error';
   // While processing: 0..1.
   progress?: number;
@@ -14,6 +14,9 @@ export interface AssetRecord extends Asset {
   addedAt: number;
   sourceUrl?: string;
   sourceTitle?: string;
+  // Uploads: whether every rendition is in cloud storage yet. Until then
+  // the cloud row says "processing", so other devices don't fetch them.
+  uploaded?: boolean;
 }
 
 export interface Point {
@@ -28,7 +31,11 @@ export interface Collection {
   coverAssetId: string | null;
   // Where the last batch of added items settled, in canvas coordinates.
   lastDrop: Point | null;
+  // The owner: only they can edit it.
   createdBy: string;
+  // Published read-only at /c/<slug>.
+  isPublic: boolean;
+  slug: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -64,6 +71,7 @@ export interface User {
   id: string;
   name: string;
   color: string;
+  avatarUrl?: string | null;
   // Default destination for items added from the Feed.
   activeTargetId: string | null;
 }

@@ -18,7 +18,7 @@ export type ToIngest =
 
 export type FromIngest =
   | { type: 'identified'; jobId: number; id: string; meta: ProbeResult }
-  | { type: 'original'; jobId: number; url: string }
+  | { type: 'original'; jobId: number; url: string; bytes: number }
   | { type: 'progress'; jobId: number; progress: number }
   | { type: 'done'; jobId: number; duration: number; l0: SpriteRendition; l1: VideoRendition; l2: VideoRendition | null }
   | { type: 'error'; jobId: number; message: string };

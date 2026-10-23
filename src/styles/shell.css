@@ -332,3 +332,81 @@
     display: none;
   }
 }
+
+.public-title {
+  gap: 8px;
+  font-size: 13px;
+}
+
+.public-title span {
+  color: var(--text-2);
+}
+
+.account {
+  position: relative;
+  margin-left: 4px;
+  border-radius: 50%;
+}
+
+.account img.avatar {
+  object-fit: cover;
+}
+
+.sync-dot {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--app-bg);
+}
+
+.sync-dot.pending {
+  background: var(--amber);
+}
+
+.sync-dot.error {
+  background: var(--red);
+}
+
+/* Sign-in and missing-link screens. */
+.signin {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: 16px;
+}
+
+.signin-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 300px;
+  padding: 28px 24px 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  text-align: center;
+}
+
+.signin-card h1 {
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.signin-card p {
+  margin-bottom: 6px;
+  color: var(--text-2);
+}
+
+a.btn {
+  text-decoration: none;
+  color: inherit;
+}
+
+a.btn.secondary {
+  color: var(--text);
+}

@@ -2,6 +2,7 @@
 // creates a view: a canvas transferred to the worker, so UI work on this
 // thread never costs the board a frame.
 
+import { mediaUrl } from '../data/media.ts';
 import type { Asset } from '../media/library.ts';
 import type {
   CameraState,
@@ -102,7 +103,7 @@ export class EngineClient {
   // Upserts asset metadata. Relative URLs inside a worker resolve against
   // the worker's script, so the worker gets absolute ones.
   setAssets(assets: Asset[]): void {
-    const abs = (url: string) => new URL(url, document.baseURI).href;
+    const abs = mediaUrl;
     const resolved = assets.map((a) => ({
       ...a,
       l0: a.l0 && { ...a.l0, url: abs(a.l0.url) },

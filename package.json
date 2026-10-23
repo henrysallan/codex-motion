@@ -7,22 +7,31 @@
   "scripts": {
     "dev": "vite",
     "build": "npm run typecheck && vite build",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts && tsc --noEmit -p workers/media",
     "gen:clips": "node scripts/gen-test-clips.ts",
     "build:proxies": "node scripts/build-proxies.ts",
-    "test": "node --test 'scripts/test/*.test.ts'"
+    "test": "node --test 'scripts/test/*.test.ts'",
+    "upload:library": "node --env-file=.env.local scripts/upload-library.ts --sql supabase/seed-library.sql"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^1.1.0",
+    "@cloudflare/workers-types": "^5.20261022.1",
     "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
     "@webgpu/types": "^0.1.74",
+    "cheerio": "^1.2.0",
+    "domhandler": "^5.0.3",
+    "playwright-core": "^1.64.1",
     "typescript": "^7.0.2",
-    "vite": "^8.3.5"
+    "vite": "^8.3.5",
+    "wrangler": "^4.152.0",
+    "zod": "^4.6.7"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",
+    "@supabase/supabase-js": "^2.118.0",
     "idb": "^8.0.4",
     "lucide-react": "^1.61.0",
     "mediabunny": "^1.62.0",

@@ -9,6 +9,8 @@
 import { create } from 'zustand';
 import * as db from '../data/db.ts';
 import { type AssetRecord, type Collection, newId, type Note, type Placement, type Point, type User } from '../data/model.ts';
+import * as remote from '../data/remote.ts';
+import { enqueue } from '../data/sync.ts';
 import type { Library } from '../media/library.ts';
 import { justifiedRows } from './layout/arrange.ts';
 import { type Box, placeIncoming } from './layout/relax.ts';
@@ -51,6 +53,11 @@ export interface FocusTarget {
 
 interface State extends Prefs {
   loaded: boolean;
+  // local: IndexedDB only. remote: signed in, synced with Supabase.
+  // public: someone's published collection, read-only.
+  mode: 'local' | 'remote' | 'public';
+  // In public mode: who published it.
+  publicOwner: { name: string; avatarUrl: string | null } | null;
   user: User;
   assets: Record<string, AssetRecord>;
   collections: Record<string, Collection>;
@@ -98,6 +105,8 @@ function loadPrefs(): Prefs {
 export const useStore = create<State>(() => ({
   ...loadPrefs(),
   loaded: false,
+  mode: 'local',
+  publicOwner: null,
   user: { id: 'local', name: 'You', color: '#4f7cff', activeTargetId: null },
   assets: {},
   collections: {},
@@ -114,6 +123,8 @@ const set = useStore.setState;
 const get = useStore.getState;
 
 useStore.subscribe((s, prev) => {
+  // A public page borrows the layout; it never saves it over the user's own.
+  if (s.mode === 'public') return;
   const keys = Object.keys(defaultPrefs) as (keyof Prefs)[];
   if (!keys.some((k) => s[k] !== prev[k])) return;
   const prefs = { ...Object.fromEntries(keys.map((k) => [k, s[k]])), version: PREFS_VERSION };
@@ -175,13 +186,16 @@ export function shuffled<T>(xs: T[], seed: number): T[] {
 
 // First run: three collections from the sample library so there is
 // something to look at, including the 200-clip board the M0 gate used.
-function seedCollections(assets: AssetRecord[], user: User): { collections: Collection[]; placements: Placement[] } {
+function seedCollections(assets: AssetRecord[], user: User, onlySample = false): { collections: Collection[]; placements: Placement[] } {
   const now = Date.now();
   const collections: Collection[] = [];
   const placements: Placement[] = [];
   const make = (name: string, items: AssetRecord[], rowHeight: () => number, age: number) => {
     if (items.length === 0) return;
-    const c: Collection = { id: newId(), name, coverAssetId: null, lastDrop: null, createdBy: user.id, createdAt: now - age, updatedAt: now - age };
+    const c: Collection = {
+      id: newId(), name, coverAssetId: null, lastDrop: null, createdBy: user.id,
+      isPublic: false, slug: null, createdAt: now - age, updatedAt: now - age,
+    };
     const area = items.reduce((s, a) => s + (a.width / a.height) * 240 * 240, 0);
     const boxes = justifiedRows(items.map((a) => a.width / a.height), Math.sqrt(area * 1.6), rowHeight, 16);
     boxes.forEach((b, i) =>
@@ -196,12 +210,22 @@ function seedCollections(assets: AssetRecord[], user: User): { collections: Coll
   };
   const rnd = mulberry32(7);
   const varied = () => 160 + rnd() * 160;
-  make('Benchmark board', shuffled(assets, 1), varied, 3 * 86400e3);
+  if (!onlySample) make('Benchmark board', shuffled(assets, 1), varied, 3 * 86400e3);
   make('Sample board', shuffled(assets, 2).slice(0, 36), varied, 2 * 86400e3);
-  make('Type & shapes', assets.filter((a) => /type|shapes/.test(a.name)), () => 220, 3600e3);
+  if (!onlySample) make('Type & shapes', assets.filter((a) => /type|shapes/.test(a.name)), () => 220, 3600e3);
   return { collections, placements };
 }
 
+const byId = <T extends { id: string }>(xs: T[]) => Object.fromEntries(xs.map((x) => [x.id, x]));
+
+// Opens with the saved tabs that still exist.
+function withTabs(collections: Record<string, Collection>) {
+  const prefs = get();
+  const tabs = prefs.tabs.filter((id) => collections[id]);
+  return { tabs, activeTab: prefs.activeTab && collections[prefs.activeTab] ? prefs.activeTab : (tabs[0] ?? null) };
+}
+
+// Local-only mode: IndexedDB, plus the dev server's sample library.
 export async function loadApp(): Promise<void> {
   const [snap, library] = await Promise.all([
     db.loadAll(),
@@ -225,21 +249,99 @@ export async function loadApp(): Promise<void> {
     void db.flush().then(() => Promise.all([db.putMeta('seeded', true), db.putMeta('user', user)]));
   }
 
-  const byId = <T extends { id: string }>(xs: T[]) => Object.fromEntries(xs.map((x) => [x.id, x]));
   const cols = byId(collections);
-  const prefs = get();
-  // Drop tabs for collections that no longer exist.
-  const tabs = prefs.tabs.filter((id) => cols[id]);
+  set({ loaded: true, mode: 'local', user, assets, collections: cols, placements: byId(placements), notes: byId(snap.notes), ...withTabs(cols) });
+}
+
+// Signed in: show the local cache at once, then the server's copy.
+export async function loadRemote(userId: string): Promise<void> {
+  let snap = await db.loadAll();
+  // A cache from a different account on this browser isn't ours to show.
+  if (snap.collections.some((c) => c.createdBy !== 'local' && c.createdBy !== userId)) {
+    await db.clearLocal();
+    snap = await db.loadAll();
+  }
+  const cached = snap.collections.filter((c) => c.createdBy === userId);
+  if (cached.length) {
+    const cols = byId(cached);
+    set({
+      loaded: true,
+      mode: 'remote',
+      assets: { ...get().assets, ...byId(snap.assets) },
+      collections: cols,
+      placements: byId(snap.placements.filter((p) => cols[p.collectionId])),
+      notes: byId(snap.notes.filter((n) => cols[n.collectionId])),
+      ...withTabs(cols),
+    });
+  }
+
+  const ws = await remote.fetchWorkspace(userId);
+  const assets = byId(ws.assets);
+  // Uploads still processing here aren't on the server yet.
+  for (const a of snap.assets) if (a.origin === 'upload' && (!assets[a.id] || !a.uploaded)) assets[a.id] = a;
+  let collections = ws.collections;
+  let placements = ws.placements;
+  let notes = ws.notes;
+
+  // First sign-in on a browser with local-only work: it moves to the account.
+  const local = snap.collections.filter((c) => c.createdBy === 'local');
+  if (local.length) {
+    const moved = local.map((c) => ({ ...c, createdBy: userId }));
+    const ids = new Set(moved.map((c) => c.id));
+    const movedPlacements = snap.placements.filter((p) => ids.has(p.collectionId));
+    const movedNotes = snap.notes.filter((n) => ids.has(n.collectionId));
+    for (const a of snap.assets) if (a.origin === 'upload') db.put('assets', a);
+    for (const c of moved) db.put('collections', c);
+    for (const p of movedPlacements) db.put('placements', p);
+    for (const n of movedNotes) db.put('notes', n);
+    collections = [...collections, ...moved];
+    placements = [...placements, ...movedPlacements];
+    notes = [...notes, ...movedNotes];
+  } else if (collections.length === 0 && !(await db.getMeta('welcomed'))) {
+    // A new account starts with one sample board.
+    const seed = seedCollections(ws.assets.filter((a) => a.origin === 'library'), ws.user, true);
+    for (const c of seed.collections) db.put('collections', c);
+    for (const p of seed.placements) db.put('placements', p);
+    collections = seed.collections;
+    placements = seed.placements;
+    void db.putMeta('welcomed', true);
+  }
+
+  const cols = byId(collections);
   set({
     loaded: true,
-    user,
+    mode: 'remote',
+    user: ws.user,
     assets,
     collections: cols,
     placements: byId(placements),
-    notes: byId(snap.notes),
-    tabs,
-    activeTab: prefs.activeTab && cols[prefs.activeTab] ? prefs.activeTab : (tabs[0] ?? null),
+    notes: byId(notes),
+    ...withTabs(cols),
   });
+  await db.replaceCache({ assets: Object.values(assets), collections, placements, notes });
+}
+
+// Someone's published collection, read-only: nothing here is saved.
+export async function loadPublic(slug: string): Promise<boolean> {
+  db.writes.local = false;
+  db.writes.remote = false;
+  const pub = await remote.fetchPublic(slug);
+  if (!pub) return false;
+  const c = pub.collection;
+  set({
+    loaded: true,
+    mode: 'public',
+    publicOwner: pub.owner,
+    assets: byId(pub.assets),
+    collections: { [c.id]: c },
+    placements: byId(pub.placements),
+    notes: byId(pub.notes),
+    tabs: [c.id],
+    activeTab: c.id,
+    panes: { collections: false, feed: false },
+    snap: false,
+  });
+  return true;
 }
 
 // ---- workspace -----------------------------------------------------------------
@@ -304,7 +406,10 @@ export function updatePrefs(p: Partial<Prefs>): void {
 
 export function createCollection(name = 'Untitled collection'): string {
   const now = Date.now();
-  const c: Collection = { id: newId(), name, coverAssetId: null, lastDrop: null, createdBy: get().user.id, createdAt: now, updatedAt: now };
+  const c: Collection = {
+    id: newId(), name, coverAssetId: null, lastDrop: null, createdBy: get().user.id,
+    isPublic: false, slug: null, createdAt: now, updatedAt: now,
+  };
   set({ collections: { ...get().collections, [c.id]: c } });
   db.put('collections', c);
   return c.id;
@@ -351,7 +456,24 @@ export function deleteCollection(id: string): void {
 export function setActiveTarget(id: string | null): void {
   const user = { ...get().user, activeTargetId: id };
   set({ user });
-  void db.putMeta('user', user);
+  if (get().mode === 'remote') enqueue('profiles', user.id, remote.profileToRow(user));
+  else void db.putMeta('user', user);
+}
+
+// Publishes a collection read-only at /c/<slug>, or takes it down. A slug
+// only exists while published, so every taken slug is visible to the
+// availability check.
+export function setPublished(id: string, slug: string | null): void {
+  touch(id, { isPublic: !!slug, slug });
+}
+
+export function slugify(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48) || 'collection';
 }
 
 // ---- edits with undo -----------------------------------------------------------

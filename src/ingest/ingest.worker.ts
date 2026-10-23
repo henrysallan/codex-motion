@@ -123,7 +123,8 @@ async function finishProxy(p: Proxy, path: string): Promise<VideoRendition> {
   await p.output.finalize();
   const bytes = p.output.target.buffer!;
   await writeFile(path, bytes);
-  return { url: `opfs:${path}`, width: p.width, height: p.height, bytes: bytes.byteLength };
+  // URLs are storage keys; the same path in OPFS and in cloud storage.
+  return { url: path, width: p.width, height: p.height, bytes: bytes.byteLength };
 }
 
 // Samples `count` frames evenly over the clip into a BC1 sprite.
@@ -172,7 +173,7 @@ class SpriteBuilder {
     data.set(header);
     data.set(new Uint8Array(compressed), header.length);
     await writeFile(path, data);
-    return { url: `opfs:${path}`, format: 'bc1', frameWidth: this.fw, frameHeight: this.fh, frameCount: this.count, bytes: data.byteLength };
+    return { url: path, format: 'bc1', frameWidth: this.fw, frameHeight: this.fh, frameCount: this.count, bytes: data.byteLength };
   }
 }
 
@@ -184,7 +185,7 @@ async function build(jobId: number, id: string, job: Job): Promise<void> {
   const ext = (file.name.match(/\.(\w+)$/)?.[1] ?? 'bin').toLowerCase();
   const originalPath = `${dir}/original.${ext}`;
   await writeFile(originalPath, file);
-  post({ type: 'original', jobId, url: `opfs:${originalPath}` });
+  post({ type: 'original', jobId, url: originalPath, bytes: file.size });
 
   const l1Height = Math.min(480, meta.height);
   const wantL2 = meta.height >= 600;

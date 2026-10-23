@@ -1,8 +1,12 @@
 // The pill bar: the view pill (Collections and Feed toggles), then one tab
-// per open collection, then global controls.
+// per open collection, then global controls. On a public collection page:
+// its title and owner instead.
 
-import { Crosshair, LayoutGrid, Monitor, Moon, Pause, Play, Sparkles, Sun, X } from 'lucide-react';
+import { Crosshair, LayoutGrid, LogOut, Monitor, Moon, Pause, Play, Sparkles, Sun, X } from 'lucide-react';
 import { useState } from 'react';
+import { remoteEnabled } from '../config.ts';
+import { signOut } from '../data/supabase.ts';
+import { useSyncStatus } from '../data/sync.ts';
 import { IconButton } from '../ui/controls.tsx';
 import { Menu, useMenu } from '../ui/popover.tsx';
 import {
@@ -17,6 +21,36 @@ import {
 import { useResolvedTheme } from './theme.ts';
 
 export function TopBar() {
+  const mode = useStore((s) => s.mode);
+  if (mode === 'public') return <PublicTopBar />;
+  return <AppTopBar />;
+}
+
+function PublicTopBar() {
+  const c = useStore((s) => (s.activeTab ? s.collections[s.activeTab] : null));
+  const owner = useStore((s) => s.publicOwner);
+  const paused = useStore((s) => s.paused);
+  return (
+    <header className="topbar">
+      <div className="topbar-start" />
+      <div className="topbar-center public-title">
+        <strong>{c?.name}</strong>
+        {owner?.name && <span>by {owner.name}</span>}
+      </div>
+      <div className="topbar-end">
+        <IconButton label={paused ? 'Play all (Space)' : 'Pause all (Space)'} onClick={() => setPaused(!paused)}>
+          {paused ? <Play size={15} /> : <Pause size={15} />}
+        </IconButton>
+        <ThemeButton />
+        <a className="btn secondary sm" href="/">
+          codex-motion
+        </a>
+      </div>
+    </header>
+  );
+}
+
+function AppTopBar() {
   const panes = useStore((s) => s.panes);
   const tabs = useStore((s) => s.tabs);
   const paused = useStore((s) => s.paused);
@@ -48,9 +82,7 @@ export function TopBar() {
           {paused ? <Play size={15} /> : <Pause size={15} />}
         </IconButton>
         <ThemeButton />
-        <span className="avatar" style={{ background: user.color }} title={user.name}>
-          {user.name.slice(0, 1)}
-        </span>
+        <AccountButton name={user.name} color={user.color} avatarUrl={user.avatarUrl ?? null} />
       </div>
     </header>
   );
@@ -123,6 +155,38 @@ function ThemeButton() {
             { label: 'Light', icon: <Sun size={15} />, checked: pref === 'light', onSelect: () => setTheme('light') },
             { label: 'Dark', icon: <Moon size={15} />, checked: pref === 'dark', onSelect: () => setTheme('dark') },
             { label: 'System', icon: <Monitor size={15} />, checked: pref === 'system', onSelect: () => setTheme('system') },
+          ]}
+        />
+      )}
+    </>
+  );
+}
+
+function AccountButton({ name, color, avatarUrl }: { name: string; color: string; avatarUrl: string | null }) {
+  const menu = useMenu();
+  const sync = useSyncStatus();
+  const state = sync.error ? 'error' : sync.pending ? 'pending' : 'ok';
+  const label = state === 'error' ? `Not saved: ${sync.error}` : state === 'pending' ? 'Saving…' : 'All changes saved';
+  return (
+    <>
+      <button type="button" className="account" title={remoteEnabled ? `${name} · ${label}` : name} onClick={(e) => menu.toggle(e.currentTarget)}>
+        {avatarUrl ? (
+          <img className="avatar" src={avatarUrl} alt="" referrerPolicy="no-referrer" />
+        ) : (
+          <span className="avatar" style={{ background: color }}>
+            {name.slice(0, 1).toUpperCase()}
+          </span>
+        )}
+        {remoteEnabled && state !== 'ok' && <span className={`sync-dot ${state}`} />}
+      </button>
+      {menu.anchor && (
+        <Menu
+          anchor={menu.anchor}
+          align="end"
+          onClose={menu.close}
+          items={[
+            { title: name },
+            ...(remoteEnabled ? [{ label, disabled: true }, { label: 'Sign out', icon: <LogOut size={14} />, onSelect: () => void signOut().then(() => location.reload()) }] : [{ label: 'Local only (no account)', disabled: true }]),
           ]}
         />
       )}

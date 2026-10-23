@@ -9,3 +9,4 @@ public/media/
 .claude/
 .env*.local
 .vercel
+.env*

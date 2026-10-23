@@ -160,3 +160,10 @@
   position: absolute;
   inset: 0;
 }
+
+.public-badge {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  box-shadow: var(--shadow-sm);
+}

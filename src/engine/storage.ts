@@ -1,12 +1,11 @@
 // Byte loading for the render worker.
 //
-//   opfs:<path>   a file in the origin private file system (ingested media)
-//   blob:…        a dropped file still being ingested
-//   /media/…      server media, cached through to OPFS under cache/ so a
-//                 board reopens from local disk; files are content-addressed
-//                 and never change, so a cached copy never goes stale
-
-const CACHE_DIR = 'cache';
+//   opfs:<path>        a file in the origin private file system
+//   blob:…             a dropped file still being ingested
+//   …/media/<hash>/…   content-addressed media: read from OPFS if this
+//                      device has it (ingested here, or fetched before),
+//                      else fetched and kept there. Keys never change
+//                      content, so a local copy never goes stale.
 
 let root: Promise<FileSystemDirectoryHandle> | null = null;
 const opfs = () => (root ??= navigator.storage.getDirectory());
@@ -38,15 +37,19 @@ async function fetchBytes(url: string): Promise<ArrayBuffer> {
 export async function loadBytes(url: string): Promise<ArrayBuffer> {
   if (url.startsWith('opfs:')) return readOpfs(url.slice(5));
   if (url.startsWith('blob:')) return fetchBytes(url);
-  const { pathname, origin } = new URL(url);
-  if (origin !== location.origin || !pathname.startsWith('/media/')) return fetchBytes(url);
-  const cached = CACHE_DIR + pathname;
-  try {
-    return await readOpfs(cached);
-  } catch {
-    const bytes = await fetchBytes(url);
-    // Best effort: a full disk or a private window just skips the cache.
-    writeOpfs(cached, bytes.slice(0)).catch(() => {});
-    return bytes;
+  const { pathname } = new URL(url);
+  const m = pathname.match(/^\/(media\/[0-9a-f]{16}\/[\w.]+)$/);
+  if (!m) return fetchBytes(url);
+  const key = m[1];
+  for (const path of [key, `cache/${key}`]) {
+    try {
+      return await readOpfs(path);
+    } catch {
+      // Not here; try the next place.
+    }
   }
+  const bytes = await fetchBytes(url);
+  // Best effort: a full disk or a private window just skips the cache.
+  writeOpfs(key, bytes.slice(0)).catch(() => {});
+  return bytes;
 }

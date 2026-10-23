@@ -6,6 +6,7 @@ import {
   ArrowDownToLine,
   ArrowUpToLine,
   Crosshair,
+  Globe,
   Grid3x3,
   Hand,
   Image as ImageIcon,
@@ -45,6 +46,7 @@ import { useResolvedTheme } from '../theme.ts';
 import { BoardController, type Tool } from './BoardController.ts';
 import { FocusBar } from './FocusBar.tsx';
 import { Hud } from './Hud.tsx';
+import { SharePopover } from '../SharePopover.tsx';
 import { NotesLayer } from './NotesLayer.tsx';
 import { boardRegistry } from './registry.ts';
 
@@ -71,6 +73,8 @@ export function CanvasPane({ collectionId }: { collectionId: string }) {
   const focus = useStore((s) => (s.focus?.collectionId === collectionId ? s.focus : null));
   const hud = useStore((s) => s.hud);
   const feedOpen = useStore((s) => s.panes.feed);
+  const readonly = useStore((s) => s.mode === 'public');
+  const [shareAnchor, setShareAnchor] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!view || !host.current || !notesRef.current) return;
@@ -80,7 +84,7 @@ export function CanvasPane({ collectionId }: { collectionId: string }) {
       onTool: setTool,
       onContextMenu: (x, y, hit) => setMenu({ x, y, hit }),
       onEditNote: setEditing,
-    });
+    }, readonly);
     setCtrl(c);
     boardRegistry.current = c;
     host.current.focus({ preventScroll: true });
@@ -89,7 +93,7 @@ export function CanvasPane({ collectionId }: { collectionId: string }) {
       c.dispose();
       setCtrl(null);
     };
-  }, [view, collectionId]);
+  }, [view, collectionId, readonly]);
 
   useEffect(() => ctrl?.setTheme(theme), [ctrl, theme]);
 
@@ -103,7 +107,7 @@ export function CanvasPane({ collectionId }: { collectionId: string }) {
 
   // Files dropped from the desktop land where they're dropped.
   const onDragOver = (e: React.DragEvent) => {
-    if (!e.dataTransfer.types.includes('Files')) return;
+    if (readonly || !e.dataTransfer.types.includes('Files')) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     setFileDrag(true);
@@ -161,27 +165,31 @@ export function CanvasPane({ collectionId }: { collectionId: string }) {
 
   return (
     <div className={`board ${fileDrag ? 'file-drag' : ''}`} onDragOver={onDragOver} onDragLeave={() => setFileDrag(false)} onDrop={onDrop}>
-      <div className="board-host" ref={host} tabIndex={0} data-tool={tool}>
+      <div className="board-host" ref={host} tabIndex={0} data-tool={tool} data-readonly={readonly || undefined}>
         <div className="notes-layer" ref={notesRef}>
-          <NotesLayer collectionId={collectionId} ctrl={ctrl} editing={editing} setEditing={setEditing} />
+          <NotesLayer collectionId={collectionId} ctrl={ctrl} editing={readonly ? null : editing} setEditing={readonly ? () => {} : setEditing} />
         </div>
       </div>
 
-      {collection && (
+      {collection && !readonly && (
         <div className="board-head">
           <BoardTitle name={collection.name} onRename={(n) => renameCollection(collectionId, n)} />
           <span className="board-count">{plural(placementCount, 'clip')}</span>
           <IconButton label={target ? 'Clear active target' : 'Set as active target'} size="sm" pressed={target} onClick={() => setActiveTarget(target ? null : collectionId)}>
-            <Crosshair size={15} />
+            <Crosshair size={14} />
+          </IconButton>
+          <IconButton label={collection.isPublic ? 'Published · share' : 'Share'} size="sm" pressed={collection.isPublic} onClick={(e) => setShareAnchor(shareAnchor ? null : e.currentTarget)}>
+            <Globe size={14} />
           </IconButton>
         </div>
       )}
+      {shareAnchor && <SharePopover collectionId={collectionId} anchor={shareAnchor} onClose={() => setShareAnchor(null)} />}
 
       <div className="board-corner">
         <ZoomMenu zoom={camera.zoom} ctrl={ctrl} />
       </div>
 
-      {!focus && (
+      {!focus && !readonly && (
         <BoardToolbar
           tool={tool}
           ctrl={ctrl}
@@ -190,11 +198,16 @@ export function CanvasPane({ collectionId }: { collectionId: string }) {
         />
       )}
 
-      {selRect && !focus && selection.length > 0 && ctrl && <SelectionBar rect={selRect} count={selection.length} ctrl={ctrl} collectionId={collectionId} />}
+      {selRect && !focus && !readonly && selection.length > 0 && ctrl && <SelectionBar rect={selRect} count={selection.length} ctrl={ctrl} collectionId={collectionId} />}
 
       {focus && ctrl && <FocusBar ctrl={ctrl} focus={focus} />}
 
-      {empty && (
+      {empty && readonly && (
+        <div className="board-empty">
+          <EmptyState icon={<Upload size={22} />} title="Nothing here yet" />
+        </div>
+      )}
+      {empty && !readonly && (
         <div className="board-empty">
           <EmptyState
             icon={<Upload size={22} />}
@@ -215,7 +228,7 @@ export function CanvasPane({ collectionId }: { collectionId: string }) {
 
       {fileDrag && <div className="file-drop-hint">Drop to add to {collection?.name}</div>}
       {menu && <Menu anchor={{ x: menu.x, y: menu.y }} items={menuItems} onClose={() => setMenu(null)} />}
-      {hud && ctrl && <Hud ctrl={ctrl} onClose={() => updatePrefs({ hud: false })} />}
+      {hud && ctrl && !readonly && <Hud ctrl={ctrl} onClose={() => updatePrefs({ hud: false })} />}
     </div>
   );
 }

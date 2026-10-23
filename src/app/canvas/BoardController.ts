@@ -65,6 +65,8 @@ const CAMERA_KEY = 'trace.camera.';
 export class BoardController {
   readonly camera = new Camera();
   tool: Tool = 'select';
+  // A published collection someone else is viewing: look, don't touch.
+  readonly readonly: boolean;
 
   private readonly host: HTMLElement;
   // Keyboard shortcuts work anywhere in the pane, including its toolbars.
@@ -101,7 +103,8 @@ export class BoardController {
   private readonly dropTarget: DropTarget;
   private saveCameraTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(host: HTMLElement, notesLayer: HTMLElement, view: EngineView, collectionId: string, cb: BoardCallbacks) {
+  constructor(host: HTMLElement, notesLayer: HTMLElement, view: EngineView, collectionId: string, cb: BoardCallbacks, readonly = false) {
+    this.readonly = readonly;
     this.host = host;
     this.keyTarget = host.parentElement ?? host;
     this.notesLayer = notesLayer;
@@ -169,7 +172,7 @@ export class BoardController {
         addAssets(collectionId, assetIds, { x: wx, y: wy });
       },
     };
-    dropTargets.add(this.dropTarget);
+    if (!readonly) dropTargets.add(this.dropTarget);
 
     this.syncFocus();
     this.pushCamera();
@@ -481,7 +484,7 @@ export class BoardController {
 
   // Notes call this from their own pointerdown.
   pointerDownOnNote(e: PointerEvent | React.PointerEvent, id: string): void {
-    if (e.button !== 0 || space.down || this.tool === 'hand') return;
+    if (e.button !== 0 || space.down || this.tool === 'hand' || this.readonly) return;
     e.stopPropagation();
     this.host.focus({ preventScroll: true });
     this.selectFor(id, e.shiftKey || e.metaKey || e.ctrlKey);
@@ -494,7 +497,8 @@ export class BoardController {
     this.host.focus({ preventScroll: true });
     cancelAnimationFrame(this.cameraAnim);
     const p = this.local(e);
-    if (e.button === 1 || space.down || this.tool === 'hand') {
+    // Read-only boards pan on any drag.
+    if (e.button === 1 || space.down || this.tool === 'hand' || (this.readonly && !this.focusId)) {
       if (space.down) space.used = true;
       this.host.setPointerCapture(e.pointerId);
       this.gesture = { kind: 'pan', pointerId: e.pointerId, x: e.clientX, y: e.clientY };
@@ -666,7 +670,7 @@ export class BoardController {
     if (hit) {
       if (this.focusId === hit.id) this.exitFocus();
       else this.enterFocus(hit.id);
-    } else if (!this.focusId) {
+    } else if (!this.focusId && !this.readonly) {
       const [wx, wy] = this.camera.toWorld(p.x, p.y);
       const n = addNote(this.collectionId, { x: wx, y: wy });
       setSelection([n.id]);
@@ -676,6 +680,7 @@ export class BoardController {
 
   private onContextMenu = (e: MouseEvent) => {
     e.preventDefault();
+    if (this.readonly) return;
     const p = this.local(e);
     const noteId = (e.target as HTMLElement).closest?.<HTMLElement>('[data-note]')?.dataset.note ?? null;
     const id = noteId ?? this.hitTest(p.x, p.y)?.id ?? null;
@@ -712,6 +717,14 @@ export class BoardController {
     if (t instanceof HTMLButtonElement && (e.key === 'Enter' || e.key === ' ')) return;
     const meta = e.metaKey || e.ctrlKey;
     const key = e.key.toLowerCase();
+    if (this.readonly && (meta || ['delete', 'backspace', 'n', 'i', 'o', 'v', '`'].includes(key))) return;
+    if (this.readonly && key.startsWith('arrow')) {
+      const step = e.shiftKey ? 400 : 100;
+      this.camera.panBy(key === 'arrowleft' ? step : key === 'arrowright' ? -step : 0, key === 'arrowup' ? step : key === 'arrowdown' ? -step : 0);
+      this.pushCamera();
+      e.preventDefault();
+      return;
+    }
     if (meta && key === 'z') {
       if (e.shiftKey) redo(this.collectionId);
       else undo(this.collectionId);
@@ -896,6 +909,7 @@ export class BoardController {
   focusTime = 0;
 
   setRange(inPoint: number | null, outPoint: number | null): void {
+    if (this.readonly) return;
     const p = this.focusId ? this.placements.get(this.focusId) : null;
     if (!p) return;
     const a = useStore.getState().assets[p.assetId];

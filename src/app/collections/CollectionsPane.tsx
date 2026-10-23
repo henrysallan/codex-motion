@@ -2,7 +2,7 @@
 // list, with search and sort. Opening one adds (or focuses) its tab; any
 // one can be the active target for clips added from the Feed.
 
-import { ArrowUpDown, Crosshair, FolderOpen, ImageOff, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react';
+import { ArrowUpDown, Crosshair, FolderOpen, Globe, ImageOff, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 import type { Collection } from '../../data/model.ts';
 import type { ViewItem } from '../../engine/protocol.ts';
@@ -11,6 +11,7 @@ import { Menu, useMenu } from '../../ui/popover.tsx';
 import { engine } from '../engine.ts';
 import { plural, timeAgo } from '../format.ts';
 import { coverCrop, fractionAcross, ScrollSurface } from '../ScrollSurface.tsx';
+import { SharePopover } from '../SharePopover.tsx';
 import {
   type CollectionsSort,
   coverAssetOf,
@@ -233,6 +234,7 @@ function CollectionEntry({
 }) {
   const { c, count, cover } = card;
   const menu = useMenu();
+  const [share, setShare] = useState<{ x: number; y: number } | null>(null);
   const scrub = (e: React.PointerEvent<HTMLElement>) => card.coverAssetId && engine.scrub(card.coverAssetId, fractionAcross(e));
   const unscrub = () => engine.scrub(null);
   const name = renaming ? (
@@ -263,6 +265,15 @@ function CollectionEntry({
     { label: 'Open', icon: <FolderOpen size={15} />, onSelect: () => openCollection(c.id) },
     { label: target ? 'Clear active target' : 'Set as active target', icon: <Crosshair size={15} />, onSelect: () => setActiveTarget(target ? null : c.id) },
     { label: 'Rename', icon: <Pencil size={15} />, onSelect: onRename },
+    {
+      label: c.isPublic ? 'Published…' : 'Share…',
+      icon: <Globe size={15} />,
+      onSelect: () => {
+        const a = menu.anchor;
+        const r = a instanceof HTMLElement ? a.getBoundingClientRect() : null;
+        setShare(r ? { x: r.left, y: r.bottom } : (a as { x: number; y: number } | null) ?? { x: innerWidth / 2, y: 120 });
+      },
+    },
     'separator' as const,
     { label: 'Delete', icon: <Trash2 size={15} />, danger: true, onSelect: () => confirm(`Delete “${c.name}”? Its clips stay in the library.`) && deleteCollection(c.id) },
   ];
@@ -301,6 +312,12 @@ function CollectionEntry({
                 Active target
               </span>
             )}
+            {c.isPublic && (
+              <span className="badge blue public-badge" title={`/c/${c.slug}`}>
+                <Globe size={11} strokeWidth={2.4} />
+                Public
+              </span>
+            )}
           </div>
           <div className="meta">
             <div className="title-row">
@@ -333,6 +350,7 @@ function CollectionEntry({
     </div>
     {/* Outside the card: React bubbles portal clicks to the card otherwise. */}
     {menu.anchor && <Menu anchor={menu.anchor} onClose={menu.close} items={menuItems} />}
+    {share && <SharePopover collectionId={c.id} anchor={share} onClose={() => setShare(null)} />}
     </>
   );
 }

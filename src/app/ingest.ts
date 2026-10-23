@@ -4,6 +4,7 @@
 // A file whose hash is already in the library is just placed.
 
 import type { AssetRecord } from '../data/model.ts';
+import { uploadAsset } from '../data/upload.ts';
 import type { FromIngest, ProbeResult, ToIngest } from '../ingest/protocol.ts';
 import { addAssets } from './actions.ts';
 import { plural } from './format.ts';
@@ -40,13 +41,14 @@ function onProgress(msg: FromIngest): void {
   if (!job) return;
   const a = useStore.getState().assets[job.id];
   if (!a) return;
-  if (msg.type === 'original') upsertAsset({ ...a, original: { url: msg.url, width: a.width, height: a.height, bytes: 0 } });
+  if (msg.type === 'original') upsertAsset({ ...a, original: { url: msg.url, width: a.width, height: a.height, bytes: msg.bytes } });
   else if (msg.type === 'progress') {
     // Throttle store writes to visible steps.
     if (Math.abs((a.progress ?? 0) - msg.progress) > 0.05) upsertAsset({ ...a, progress: msg.progress });
   } else if (msg.type === 'done') {
     upsertAsset({ ...a, status: 'ready', progress: 1, duration: msg.duration, l0: msg.l0, l1: msg.l1, l2: msg.l2 });
     finish(msg.jobId);
+    void upload(job.id);
   } else if (msg.type === 'error') {
     upsertAsset({ ...a, status: 'error', error: msg.message });
     toast(`Couldn't process ${job.name}: ${msg.message}`);
@@ -118,6 +120,22 @@ export async function ingestFiles(files: File[], collectionId: string, at: { x: 
     send({ type: 'build', jobId, id });
   });
   if (ids.length) addAssets(collectionId, [...new Set(ids)], at);
+}
+
+// Sends an ingested asset's files to cloud storage, then marks it uploaded
+// (which flips its cloud row to ready).
+async function upload(id: string): Promise<void> {
+  const a = useStore.getState().assets[id];
+  if (!a || a.origin !== 'upload' || a.status !== 'ready' || a.uploaded) return;
+  if (await uploadAsset(a)) {
+    const now = useStore.getState().assets[id];
+    if (now) upsertAsset({ ...now, uploaded: true });
+  }
+}
+
+// Uploads anything ingested here that hasn't reached cloud storage yet.
+export async function uploadPending(): Promise<void> {
+  for (const a of Object.values(useStore.getState().assets)) await upload(a.id);
 }
 
 // Picks up ingests a closed tab left unfinished, from originals in OPFS.
