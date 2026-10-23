@@ -13,10 +13,17 @@
 // as soon as they're behind the playhead: hardware decoders run from small
 // surface pools and stall if frames are held.
 //
+// Packets load on demand (demux.ts): the stream asks for the next few
+// seconds past its feed position each frame, and feeding pauses at a packet
+// that isn't in yet until its request lands.
+//
+// Streams take turns to warm up, from the keyframe to their playhead
+// (Warmup below).
+//
 // A stream belongs to no particular tile. The engine shares one per
 // (source, range, clock) across every placement and view that shows it.
 
-import type { Demuxed, MediaCache } from './demux.ts';
+import type { Media, MediaCache } from './demux.ts';
 
 const LOOKAHEAD_US = 200_000;
 const MAX_QUEUED_DECODES = 3;
@@ -30,24 +37,84 @@ const SEEK_BEHIND_US = 50_000;
 const LATE_TOLERANCE_US = 120_000;
 // Frames starting this far before `in` belong to the pre-roll.
 const PREROLL_SLACK_US = 500;
+// Packets to have loaded past the feed position: when less than the
+// minimum of playback is in (or on its way), fetch on to the lead. The lead
+// grows with the time the stream has played, up to the cap, so a clip that
+// stays on screen loads in a few large requests, not one every 2 s.
+const PREFETCH_MIN_US = 1_000_000;
+const PREFETCH_LEAD_US = 3_000_000;
+const PREFETCH_CAP_US = 30_000_000;
 
 export type StreamState = 'loading' | 'ready' | 'failed' | 'closed';
+
+// Turns for streams warming up: decoding from a keyframe up to the playhead
+// before their first frame shows. Every hardware decoder's work passes
+// through one thread in the GPU process, so when a scroll stops and two
+// dozen streams start together, each gets a sliver of it and they all show
+// late, 0.1-0.2 s after starting. Taking turns, a stream warms up in a few
+// ms: the first shows almost at once and the rest follow one by one, sooner
+// on the whole. Streams on screen go before prefetches. A stream only asks
+// for a turn once its first packets have loaded.
+export class Warmup {
+  private readonly turns: number;
+  private active = 0;
+  private readonly waiting: VideoStream[] = [];
+
+  constructor(turns: number) {
+    this.turns = turns;
+  }
+
+  // Whether `s` may start decoding now. If not, it waits and is fed when a
+  // turn frees up.
+  enter(s: VideoStream): boolean {
+    const i = this.waiting.indexOf(s);
+    const yields = !s.onScreen && this.waiting.some((w) => w.onScreen);
+    if (this.active < this.turns && !yields) {
+      if (i >= 0) this.waiting.splice(i, 1);
+      this.active++;
+      return true;
+    }
+    if (i < 0) this.waiting.push(s);
+    return false;
+  }
+
+  // `s` is done warming up (or closed). `entered`: it held a turn.
+  leave(s: VideoStream, entered: boolean): void {
+    const i = this.waiting.indexOf(s);
+    if (i >= 0) this.waiting.splice(i, 1);
+    if (entered) this.active--;
+    while (this.active < this.turns && this.waiting.length > 0) {
+      const next = Math.max(0, this.waiting.findIndex((w) => w.onScreen));
+      this.waiting.splice(next, 1)[0].resume();
+    }
+  }
+}
 
 export class VideoStream {
   readonly key: string;
   readonly createdAt: number;
   state: StreamState = 'loading';
   error: string | null = null;
-  // When the decoder was configured (performance.now() time base).
+  // When the decoder was first fed (performance.now() time base); 0 until
+  // then, while the first packets load.
   readyAt = 0;
-  // Set by the engine each frame: whether any tile still uses this stream.
+  // Set by the engine each frame: whether any tile still uses this stream,
+  // and whether one on screen does.
   used = true;
+  onScreen = false;
 
-  private media: Demuxed | null = null;
+  private media: Media | null = null;
+  private unsubscribe: (() => void) | null = null;
+  private readonly warmup: Warmup;
+  // Holds a warm-up turn; has warmed up (reached its playhead once).
+  private warming = false;
+  private warm = false;
   private decoder: VideoDecoder | null = null;
   private readonly rangeIn: number;
   private rangeOut: number;
   private loop: number;
+  // First packet at or past `rangeOut` (where prefetching wraps).
+  private endIndex = 0;
   private frames: VideoFrame[] = [];
   // Last frame shown before a seek, kept on screen until the seek lands.
   private hold: VideoFrame | null = null;
@@ -62,14 +129,16 @@ export class VideoStream {
   // Whether a frame has been presented since the stream opened.
   private shown = false;
 
-  // `rangeOut` may exceed the media; it is clamped once the packets are known.
-  constructor(key: string, url: string, rangeInUs: number, rangeOutUs: number, cache: MediaCache, now: number) {
+  // `rangeOut` may exceed the media; it is clamped once the packets are
+  // known. `size` is the file's, if known.
+  constructor(key: string, url: string, size: number | undefined, rangeInUs: number, rangeOutUs: number, cache: MediaCache, warmup: Warmup, now: number) {
     this.key = key;
+    this.warmup = warmup;
     this.rangeIn = Math.max(0, Math.round(rangeInUs));
     this.rangeOut = Math.max(this.rangeIn + 1, Math.round(rangeOutUs));
     this.loop = this.rangeOut - this.rangeIn;
     this.createdAt = now;
-    cache.get(url).then(
+    cache.get(url, size).then(
       (media) => this.open(media),
       (e: unknown) => this.fail(e),
     );
@@ -95,6 +164,7 @@ export class VideoStream {
     } else {
       this.feed();
     }
+    this.prefetch();
   }
 
   // The frame to draw for the current playhead, or null before the stream
@@ -116,11 +186,19 @@ export class VideoStream {
     return !!f && f.timestamp <= this.target && (this.frames.length > 1 || f.timestamp + (f.duration ?? 0) > this.target);
   }
 
+  // Feeds the decoder after waiting for a warm-up turn.
+  resume(): void {
+    this.feed();
+  }
+
   close(): void {
     if (this.state === 'closed') return;
+    if (!this.warm) this.warmed();
     if (this.decoder && this.decoder.state !== 'closed') this.decoder.close();
     this.decoder = null;
     this.releaseFrames();
+    this.unsubscribe?.();
+    this.unsubscribe = null;
     this.media = null;
     this.state = 'closed';
   }
@@ -133,18 +211,19 @@ export class VideoStream {
     return covers || Math.abs(this.target - f.timestamp) < LATE_TOLERANCE_US ? f : null;
   }
 
-  private open(media: Demuxed): void {
+  private open(media: Media): void {
     if (this.state !== 'loading') return;
     this.media = media;
     const last = media.packets[media.packets.length - 1];
     const end = last.ts + last.dur;
     if (this.rangeOut > end) this.rangeOut = Math.max(this.rangeIn + 1, end);
     this.loop = this.rangeOut - this.rangeIn;
+    this.endIndex = media.indexAt(this.rangeOut);
+    this.unsubscribe = media.subscribe(() => this.onLoad());
     try {
       this.decoder = new VideoDecoder({ output: (f) => this.onFrame(f), error: (e) => this.fail(e) });
       this.decoder.addEventListener('dequeue', () => this.feed());
       this.state = 'ready';
-      this.readyAt = performance.now();
       this.seek(this.target);
     } catch (e) {
       this.fail(e);
@@ -199,9 +278,19 @@ export class VideoStream {
       this.fedEnd < this.target + LOOKAHEAD_US
     ) {
       const p = packets[this.feedIndex];
+      if (!p.data) {
+        // Not in yet: ask now rather than next frame. onLoad feeds on.
+        this.prefetch();
+        break;
+      }
+      if (!this.warm && !this.warming) {
+        if (!this.warmup.enter(this)) break;
+        this.warming = true;
+      }
       const ts = this.feedLoop * this.loop + (p.ts - this.rangeIn);
       if (p.ts < this.rangeIn - PREROLL_SLACK_US) this.preroll.add(ts);
       decoder.decode(new EncodedVideoChunk({ type: p.key ? 'key' : 'delta', timestamp: ts, duration: p.dur, data: p.data }));
+      if (!this.readyAt) this.readyAt = performance.now();
       this.fedEnd = Math.max(this.fedEnd, ts + p.dur);
       // At the end of the range (or the packets) start the next loop from
       // the keyframe before `in`. Packet 0 is always a keyframe.
@@ -213,6 +302,37 @@ export class VideoStream {
     }
   }
 
+  // Asks the media for the packets the decoder needs next: from the feed
+  // position through PREFETCH_MIN_US of playback, on into the next loop when
+  // the range ends sooner, topped up to the lead when a request has to go
+  // out anyway. While the feed packet itself isn't in (just opened, or after
+  // a seek) it asks for the minimum only, which reaches past the playhead
+  // (keyframes are at most a second apart) and arrives sooner.
+  private prefetch(): void {
+    const media = this.media;
+    if (this.state !== 'ready' || !media || media.complete) return;
+    const { packets } = media;
+    const played = this.readyAt ? (performance.now() - this.readyAt) * 1000 : 0;
+    const max = packets[this.feedIndex].data ? Math.min(PREFETCH_CAP_US, Math.max(PREFETCH_LEAD_US, played)) : PREFETCH_MIN_US;
+    let index = this.feedIndex;
+    // Playback covered by earlier passes.
+    let covered = 0;
+    for (let pass = 0; pass < 2 && covered < PREFETCH_MIN_US; pass++) {
+      const from = packets[index].ts;
+      const to = Math.min(this.endIndex, media.indexAt(from + PREFETCH_MIN_US - covered));
+      const extend = Math.min(this.endIndex, media.indexAt(from + max - covered));
+      media.load(index, Math.max(to, index + 1), extend);
+      covered += this.rangeOut - Math.max(from, this.rangeIn);
+      index = this.keyframeBefore(this.rangeIn);
+    }
+  }
+
+  private onLoad(): void {
+    if (this.state !== 'ready') return;
+    if (this.media!.error) this.fail(this.media!.error);
+    else this.feed();
+  }
+
   private onFrame(frame: VideoFrame): void {
     if (this.state !== 'ready' || this.preroll.delete(frame.timestamp)) {
       frame.close();
@@ -220,7 +340,15 @@ export class VideoStream {
     }
     this.frames.push(frame);
     this.trim();
+    if (!this.warm && this.presentable()) this.warmed();
     this.feed();
+  }
+
+  // Done warming up: hands the turn on. Later seeks don't take turns.
+  private warmed(): void {
+    this.warm = true;
+    this.warmup.leave(this, this.warming);
+    this.warming = false;
   }
 
   // Drops frames the playhead has passed, keeping the newest one at or

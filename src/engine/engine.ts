@@ -33,7 +33,7 @@ import type {
 import { OVERLAY_FLOATS, Renderer, TILE_FLOATS, type VideoDraw, type ViewTarget } from './renderer.ts';
 import { plan, type Slot, type Tier } from './scheduler.ts';
 import { SpriteLoader } from './sprites.ts';
-import { VideoStream } from './stream.ts';
+import { VideoStream, Warmup } from './stream.ts';
 
 const FADE_MS = 150;
 const MEDIA_CACHE_BYTES = 384 * 1024 * 1024;
@@ -55,6 +55,8 @@ const STATS_INTERVAL_MS = 250;
 const MAX_RECORD_FRAMES = 60 * 120;
 // Streams beyond the budget that may linger while crossfading out.
 const TRANSIENT_STREAMS = 8;
+// Streams warming up at once (stream.ts Warmup).
+const WARMUP_TURNS = 2;
 // Adaptive budget: decoder limits vary by device and load, and an
 // overloaded decoder fails silently (frames arrive late, or a new decoder
 // never produces one). Back off multiplicatively when that shows, creep
@@ -166,6 +168,7 @@ export class Engine {
   private readonly atlas: SpriteAtlas;
   private readonly sprites: SpriteLoader;
   private readonly cache = new MediaCache(MEDIA_CACHE_BYTES);
+  private readonly warmup = new Warmup(WARMUP_TURNS);
   private readonly assets = new Map<string, Asset>();
   private readonly views = new Map<number, View>();
 
@@ -629,7 +632,10 @@ export class Engine {
   }
 
   private syncLayers(now: number, dt: number): void {
-    for (const e of this.streams.values()) e.stream.used = false;
+    for (const e of this.streams.values()) {
+      e.stream.used = false;
+      e.stream.onScreen = false;
+    }
     const step = dt / FADE_MS;
 
     for (const v of this.views.values()) {
@@ -640,9 +646,9 @@ export class Engine {
         if (key) {
           let e = this.streams.get(key);
           if (!e || !e.stream.decoding) {
-            const url = tier === 3 ? it.asset.original!.url : tier === 2 ? it.asset.l2!.url : it.asset.l1.url;
+            const file = tier === 3 ? it.asset.original! : tier === 2 ? it.asset.l2! : it.asset.l1;
             e = {
-              stream: new VideoStream(key, url, it.rangeIn, it.rangeOut, this.cache, now),
+              stream: new VideoStream(key, file.url, file.bytes || undefined, it.rangeIn, it.rangeOut, this.cache, this.warmup, now),
               assetId: it.asset.id,
               tier,
               loopUs: it.rangeOut - it.rangeIn,
@@ -673,6 +679,7 @@ export class Engine {
             if (l.alpha <= 0) return false;
           }
           e.stream.used = true;
+          if (it.slot.visible) e.stream.onScreen = true;
           return true;
         });
       }
@@ -857,9 +864,9 @@ export class Engine {
     if (now - this.budgetCheckAt < BUDGET_CHECK_MS) return;
     this.budgetCheckAt = now;
     const max = this.settings.decoderBudget;
-    // Decoders that are configured but have produced nothing (still
+    // Decoders that have been fed but have produced nothing (still
     // downloading doesn't count: that's the network, not the decoder).
-    const stuck = [...this.streams.values()].filter((e) => e.stream.state === 'ready' && !e.stream.started && now - e.stream.readyAt > STUCK_MS);
+    const stuck = [...this.streams.values()].filter((e) => e.stream.state === 'ready' && e.stream.readyAt > 0 && !e.stream.started && now - e.stream.readyAt > STUCK_MS);
     if (this.lateRatio() > LATE_LIMIT || stuck.length > 0) {
       this.budget = Math.min(max, Math.max(BUDGET_MIN, Math.floor(this.budget * 0.75)));
       this.cleanSince = now;
