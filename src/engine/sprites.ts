@@ -18,8 +18,13 @@ async function fetchSprite(url: string) {
   const header = readL0Header(bytes);
   let blocks = bytes.subarray(L0_HEADER_BYTES);
   if (header.compressed) {
-    const stream = new Blob([blocks]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-    blocks = new Uint8Array(await new Response(stream).arrayBuffer());
+    // Write the bytes straight into the stream. Wrapping them in a Blob
+    // first costs a synchronous trip to the browser's blob registry per
+    // sprite, which took half the worker's time during a fast scroll.
+    const inflate = new DecompressionStream('deflate-raw');
+    const writer = inflate.writable.getWriter();
+    const [out] = await Promise.all([new Response(inflate.readable).arrayBuffer(), writer.write(blocks), writer.close()]);
+    blocks = new Uint8Array(out);
   }
   return { header, blocks };
 }

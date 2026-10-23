@@ -44,6 +44,13 @@ const PREFETCH_LEAD_S = 0.35;
 // A scrolling view keeps sprites resident for items within this many
 // viewports of its visible area (boards keep every item's).
 const RESIDENT_VIEWPORTS = 2;
+// A scrolling view moving faster than this (viewport heights per second,
+// over the last SPEED_WINDOW_MS) starts no new video: a tile is on screen
+// for well under a second, less than an L1 takes to download and fade in.
+// Once fast, it counts as fast until it slows below FAST_SCROLL_EXIT of that.
+const FAST_SCROLL_VIEWPORTS = 1.5;
+const FAST_SCROLL_EXIT = 0.8;
+const SPEED_WINDOW_MS = 100;
 const STATS_INTERVAL_MS = 250;
 const MAX_RECORD_FRAMES = 60 * 120;
 // Streams beyond the budget that may linger while crossfading out.
@@ -87,6 +94,12 @@ interface View {
   // Pan velocity in device px/s, for leading the prefetch margin.
   velocity: { x: number; y: number };
   lastCameraAt: number;
+  // The camera at each frame over about the last SPEED_WINDOW_MS, oldest
+  // first: a scroll view's speed is how far it moved across them. Sampled
+  // per frame, not per camera message, so messages that queue while the
+  // worker is busy don't read as a burst of speed.
+  trail: { t: number; x: number; y: number }[];
+  fastScroll: boolean;
 }
 
 interface Layer {
@@ -294,6 +307,8 @@ export class Engine {
       overlay: [],
       velocity: { x: 0, y: 0 },
       lastCameraAt: 0,
+      trail: [],
+      fastScroll: false,
     });
   }
 
@@ -351,7 +366,7 @@ export class Engine {
             x: 0, y: 0, w: 0, h: 0,
             visible: false, nearby: false, visibleArea: 0,
             keys: [null, null, null],
-            current: 0, blocked: null, focused: false, needsVideo: false,
+            current: 0, blocked: null, focused: false, needsVideo: false, fastScroll: false,
           },
           rangeIn: 0,
           rangeOut: 0,
@@ -545,7 +560,7 @@ export class Engine {
         v.velocity.x *= 0.8;
         v.velocity.y *= 0.8;
       }
-      this.layoutView(v, slots);
+      this.layoutView(v, slots, now);
     }
     this.updateSprites();
     plan(slots, this.settings, this.budget, this.assignment);
@@ -577,11 +592,19 @@ export class Engine {
     }
   }
 
-  private layoutView(v: View, slots: Slot[]): void {
+  private layoutView(v: View, slots: Slot[], now: number): void {
     const { width: W, height: H } = v;
     const scale = v.camera.zoom * v.dpr;
     const camX = v.camera.x;
     const camY = v.camera.y;
+    if (v.kind === 'scroll') {
+      const trail = v.trail;
+      trail.push({ t: now, x: camX, y: camY });
+      while (trail.length > 2 && now - trail[1].t >= SPEED_WINDOW_MS) trail.shift();
+      const from = trail[0];
+      const speed = now > from.t ? (Math.hypot(camX - from.x, camY - from.y) * scale * 1000) / (now - from.t) : 0;
+      v.fastScroll = speed > FAST_SCROLL_VIEWPORTS * H * (v.fastScroll ? FAST_SCROLL_EXIT : 1);
+    }
     const lead = PREFETCH_LEAD_S;
     const left = W * PREFETCH_MARGIN + Math.max(0, -v.velocity.x) * lead;
     const right = W * PREFETCH_MARGIN + Math.max(0, v.velocity.x) * lead;
@@ -600,6 +623,7 @@ export class Engine {
       s.current = it.assigned;
       s.blocked = this.blocked.get(it.asset.id) ?? null;
       s.needsVideo = !it.asset.l0 || this.sprites.failed.has(it.asset.id);
+      s.fastScroll = v.fastScroll;
       slots.push(s);
     }
   }
