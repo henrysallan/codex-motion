@@ -18,6 +18,9 @@
 // script uses. Keys are content hashes, so an existing object is never
 // overwritten. CORS is open: reads are public and writes are authorised by
 // bearer token, never by cookies.
+//
+// Reads come from the edge cache when they can, ranged ones included: the
+// cache cuts a 206 from the whole object, which a range miss copies in.
 
 export interface Env {
   MEDIA: R2Bucket;
@@ -31,6 +34,8 @@ const SEARCH_KEY = /^media\/search\/([0-9a-f]{16}\.(json|vec)|manifest\.json)$/;
 const MANIFEST = 'media/search/manifest.json';
 const MAX_PUT = 95 * 1024 * 1024;
 const IMMUTABLE = 'public, max-age=31536000, immutable';
+// The largest object the Workers Cache API stores.
+const CACHE_MAX = 512 * 1024 * 1024;
 
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -99,32 +104,76 @@ async function authorise(req: Request, env: Env): Promise<string | null> {
 
 // ---- reads ----------------------------------------------------------------------
 
-async function serve(req: Request, env: Env, ctx: ExecutionContext, key: string): Promise<Response> {
-  const cache = caches.default;
-  const cacheKey = new Request(new URL(req.url).origin + '/' + key);
-  const ranged = req.headers.has('Range');
-  // The manifest changes when the index is rebuilt; everything else is immutable.
-  const mutable = key === MANIFEST;
-  if (!ranged && !mutable) {
-    const hit = await cache.match(cacheKey);
-    if (hit) return req.method === 'HEAD' ? new Response(null, hit) : hit;
-  }
-  const obj = await env.MEDIA.get(key, { range: req.headers, onlyIf: req.headers });
-  if (!obj) return error(404, 'not found');
+// For a range that starts past the end. The cache's own 416 lacks CORS headers.
+function unsatisfiable(size: number): Response {
+  return new Response(null, { status: 416, headers: { ...CORS, 'Content-Range': `bytes */${size}` } });
+}
+
+function headersFor(obj: R2Object, key: string): Headers {
   const headers = new Headers(CORS);
   obj.writeHttpMetadata(headers);
   headers.set('Content-Type', contentType(key));
-  headers.set('Cache-Control', mutable ? 'no-cache' : IMMUTABLE);
+  // The search manifest changes when the index is rebuilt; everything else is immutable.
+  headers.set('Cache-Control', key === MANIFEST ? 'no-cache' : IMMUTABLE);
   headers.set('ETag', obj.httpEtag);
   headers.set('Accept-Ranges', 'bytes');
+  return headers;
+}
+
+// Objects this isolate is copying into the edge cache, so a burst of range
+// misses on one file reads it whole from R2 once.
+const filling = new Set<string>();
+
+async function fill(env: Env, cacheKey: Request, key: string): Promise<void> {
+  if (filling.has(key)) return;
+  filling.add(key);
+  try {
+    const obj = await env.MEDIA.get(key);
+    if (!obj) return;
+    const headers = headersFor(obj, key);
+    headers.set('Content-Length', String(obj.size));
+    await caches.default.put(cacheKey, new Response(obj.body, { headers }));
+  } finally {
+    filling.delete(key);
+  }
+}
+
+async function serve(req: Request, env: Env, ctx: ExecutionContext, key: string): Promise<Response> {
+  const cache = caches.default;
+  const url = new URL(req.url).origin + '/' + key;
+  const cacheKey = new Request(url);
+  const range = req.headers.get('Range');
+  const mutable = key === MANIFEST;
+  // Given a Range, match answers with a 206 cut from the cached whole object.
+  // The manifest never comes from (or goes into) the cache.
+  const hit = mutable ? undefined : await cache.match(range ? new Request(url, { headers: { Range: range } }) : cacheKey);
+  if (hit?.status === 416) return unsatisfiable(Number(hit.headers.get('Content-Range')?.split('/')[1]));
+  if (hit) return req.method === 'HEAD' ? new Response(null, hit) : hit;
+  let obj: R2Object | R2ObjectBody | null;
+  try {
+    obj = await env.MEDIA.get(key, { range: req.headers, onlyIf: req.headers });
+  } catch (e) {
+    // R2 throws on a range that starts past the end.
+    const first = Number(/^bytes=(\d+)-/.exec(range ?? '')?.[1]);
+    const size = Number.isFinite(first) ? (await env.MEDIA.head(key))?.size : undefined;
+    if (size === undefined || first < size) throw e;
+    return unsatisfiable(size);
+  }
+  if (!obj) return error(404, 'not found');
+  if (range && req.method === 'GET' && !mutable && obj.size <= CACHE_MAX) ctx.waitUntil(fill(env, cacheKey, key));
+  const headers = headersFor(obj, key);
   if (!('body' in obj)) return new Response(null, { status: 304, headers });
   let status = 200;
-  if (ranged && obj.range) {
-    const r = obj.range;
-    const start = 'suffix' in r ? obj.size - r.suffix : (r.offset ?? 0);
-    const length = 'suffix' in r ? r.suffix : (r.length ?? obj.size - start);
-    headers.set('Content-Range', `bytes ${start}-${start + length - 1}/${obj.size}`);
-    headers.set('Content-Length', String(length));
+  if (range && obj.range) {
+    // R2 sets every field of obj.range, leaving the unused ones undefined.
+    // Clamp to the object, as R2 does to the body it sends.
+    const r = obj.range as { offset?: number; length?: number; suffix?: number };
+    const suffix = typeof r.suffix === 'number';
+    const start = suffix ? Math.max(0, obj.size - r.suffix!) : (r.offset ?? 0);
+    if (start >= obj.size) return unsatisfiable(obj.size);
+    const end = !suffix && typeof r.length === 'number' ? Math.min(obj.size, start + r.length) : obj.size;
+    headers.set('Content-Range', `bytes ${start}-${end - 1}/${obj.size}`);
+    headers.set('Content-Length', String(end - start));
     status = 206;
   } else {
     headers.set('Content-Length', String(obj.size));
