@@ -71,12 +71,14 @@ if (sqlOut) {
     return r;
   };
   const rows = library.assets.map(
-    (a) => `(${q(a.id)}, ${q(a.name)}, 'library', 'ready', ${a.duration}, ${a.width}, ${a.height}, ${a.fps}, ${q(JSON.stringify(renditions(a)))}::jsonb, null)`,
+    (a) =>
+      `(${q(a.id)}, ${q(a.name)}, ${a.source ? "'scraper'" : "'library'"}, 'ready', ${a.duration}, ${a.width}, ${a.height}, ${a.fps}, ${q(JSON.stringify(renditions(a)))}::jsonb, ` +
+      `${a.source ? q(a.source.pageUrl) : 'null'}, ${a.source ? q(a.source.pageTitle ?? a.source.title) : 'null'}, null)`,
   );
   const sql =
-    `insert into public.assets (id, name, origin, status, duration, width, height, fps, renditions, added_by) values\n` +
+    `insert into public.assets (id, name, origin, status, duration, width, height, fps, renditions, source_url, source_title, added_by) values\n` +
     rows.join(',\n') +
-    `\non conflict (id) do update set renditions = excluded.renditions, status = excluded.status;\n`;
+    `\non conflict (id) do update set renditions = excluded.renditions, status = excluded.status, source_url = excluded.source_url, source_title = excluded.source_title;\n`;
   fs.writeFileSync(sqlOut, sql);
   console.log(`wrote ${sqlOut}`);
 }

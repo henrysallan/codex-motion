@@ -39,6 +39,29 @@ export interface Asset {
   // Where a scraped asset came from. The full record (page metadata,
   // context, player attributes, embed info) is <id>/source.json.
   source?: AssetSource;
+  // What a vision model saw in it (scripts/tag.ts).
+  analysis?: AssetAnalysis;
+}
+
+export interface AssetAnalysis {
+  // One sentence: what is shown and how it moves.
+  caption: string;
+  // "group:slug" from the motion vocabulary (src/media/vocabulary.ts), plus
+  // free "visual:<tag>" tags for subjects, materials, colour and style.
+  tags: string[];
+  model: string;
+  at: string;
+}
+
+// Visual embeddings (scripts/embed.ts): <id>/embedding.f32 holds one
+// L2-normalized vector per sampled frame, then their normalized mean.
+// embeddings.json + embeddings.f32 pack the means of every asset for search.
+export interface EmbeddingIndex {
+  model: string;
+  dims: number;
+  ids: string[];
+  // Path of the packed Float32 means, in `ids` order.
+  file: string;
 }
 
 export interface AssetSource {

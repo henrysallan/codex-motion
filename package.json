@@ -10,12 +10,16 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p scripts && tsc --noEmit -p workers/media",
     "gen:clips": "node scripts/gen-test-clips.ts",
     "build:proxies": "node scripts/build-proxies.ts",
+    "scrape": "node scripts/scrape.ts",
+    "tag": "node scripts/tag.ts",
+    "embed": "node scripts/embed.ts",
     "test": "node --test 'scripts/test/*.test.ts'",
     "upload:library": "node --env-file=.env.local scripts/upload-library.ts --sql supabase/seed-library.sql"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^1.1.0",
     "@cloudflare/workers-types": "^5.20261022.1",
+    "@huggingface/transformers": "^4.3.1",
     "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",

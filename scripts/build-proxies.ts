@@ -2,30 +2,37 @@
 // scraper ingest worker will: content-hash, probe, encode L1 and L2 proxies,
 // render the L0 sprite, and write public/media/library.json.
 //
-//   node scripts/build-proxies.ts [--in media/sources] [--out public/media]
+//   node scripts/build-proxies.ts [--in media/sources] [--out public/media] [--merge]
 //
 // Output per asset, keyed by content hash:
 //   <id>/l0.trl0   24-frame BC1 sprite, 128 px tall (see src/media/l0format.ts)
 //   <id>/l1.mp4    480p H.264
 //   <id>/l2.mp4    1080p H.264 (when the source is meaningfully larger than L1)
 //   <id>/asset.json
+//   <id>/source.json  everything the scraper learned, when the source came with a sidecar
 //
 // Proxies use a 1 s closed GOP and no B-frames, so a decoder can start at
 // any second and output order equals decode order. Assets whose asset.json
 // exists are reused, so re-running only processes new files.
+//
+// A source with a `<name>.json` sidecar beside it (written by the scraper)
+// carries its title and source into the library. Without --merge,
+// library.json lists only this folder's assets; with it, they are added to
+// the library already there.
 
-import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
-import { ALL_FORMATS, FilePathSource, Input } from 'mediabunny';
 import { bc1ByteLength, encodeBC1 } from '../src/media/bc1.ts';
 import { L0_MAX_FRAMES, spriteFrameSize, writeL0Header } from '../src/media/l0format.ts';
-import type { Asset, Library, VideoRendition } from '../src/media/library.ts';
+import type { Asset, AssetSource, Library, VideoRendition } from '../src/media/library.ts';
+import type { ScrapedItem } from './scrape/types.ts';
 import { arg, assertFfmpeg, defaultConcurrency, ffmpeg, ffmpegPipe, pool } from './lib/ffmpeg.ts';
+import { hashFile, type Probe, probe } from './lib/media.ts';
 
 const srcDir = path.resolve(arg('in', 'media/sources'));
 const outRoot = path.resolve(arg('out', 'public/media'));
+const merge = process.argv.includes('--merge');
 const publicRoot = path.resolve('public');
 
 const L1_HEIGHT = 480;
@@ -38,31 +45,6 @@ const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.m4v', '.webm', '.mkv']);
 
 const even = (v: number) => Math.max(2, Math.round(v / 2) * 2);
 const url = (file: string) => path.relative(publicRoot, file).split(path.sep).join('/');
-
-async function hashFile(file: string): Promise<string> {
-  const h = createHash('sha256');
-  for await (const chunk of fs.createReadStream(file)) h.update(chunk as Buffer);
-  return h.digest('hex').slice(0, 16);
-}
-
-interface Probe {
-  width: number;
-  height: number;
-  duration: number;
-  fps: number;
-}
-
-async function probe(file: string): Promise<Probe> {
-  const input = new Input({ formats: ALL_FORMATS, source: new FilePathSource(file) });
-  try {
-    const track = await input.getPrimaryVideoTrack();
-    if (!track) throw new Error('no video track');
-    const [end, start, stats] = await Promise.all([track.computeDuration(), track.getFirstTimestamp(), track.computePacketStats()]);
-    return { width: track.displayWidth, height: track.displayHeight, duration: end - start, fps: stats.averagePacketRate };
-  } finally {
-    input.dispose();
-  }
-}
 
 async function encodeProxy(src: string, out: string, info: Probe, height: number, crf: number, maxrateK: number): Promise<VideoRendition> {
   const fps = info.fps > MAX_PROXY_FPS ? info.fps / 2 : info.fps;
@@ -107,11 +89,55 @@ async function buildSprite(src: string, out: string, info: Probe): Promise<Asset
   return { url: url(out), format: 'bc1', frameWidth: fw, frameHeight: fh, frameCount, bytes: header.length + body.length };
 }
 
+// The scraper's sidecar, reduced to what the app reads; the whole record
+// is copied next to the proxies as source.json.
+function readSidecar(src: string): { item: ScrapedItem; source: AssetSource } | null {
+  const file = src.slice(0, -path.extname(src).length) + '.json';
+  if (!fs.existsSync(file)) return null;
+  try {
+    const item = JSON.parse(fs.readFileSync(file, 'utf8')) as ScrapedItem;
+    if (!item.page?.url || !item.site?.host) return null;
+    const p = item.project;
+    const source: AssetSource = {
+      site: item.site.host,
+      ...(item.site.name ? { siteName: item.site.name } : {}),
+      pageUrl: item.page.url,
+      ...(item.page.title ? { pageTitle: item.page.title } : {}),
+      ...(item.media.downloadedFrom ? { mediaUrl: item.media.downloadedFrom } : {}),
+      ...(item.media.provider ? { provider: item.media.provider } : {}),
+      title: item.title,
+      ...(p?.description || item.page.description ? { description: (p?.description ?? item.page.description)! } : {}),
+      ...(p?.client ? { client: p.client } : {}),
+      ...(p?.agency ? { agency: p.agency } : {}),
+      ...(p?.year ? { year: p.year } : {}),
+      ...(p?.credits?.length ? { credits: p.credits } : {}),
+      ...(p?.tags?.length || p?.disciplines?.length ? { tags: [...new Set([...(p?.disciplines ?? []), ...(p?.tags ?? [])])] } : {}),
+      scrapedAt: item.scrapedAt,
+    };
+    return { item, source };
+  } catch {
+    return null;
+  }
+}
+
+function withSource(asset: Asset, dir: string, sidecar: ReturnType<typeof readSidecar>): Asset {
+  if (!sidecar) return asset;
+  fs.writeFileSync(path.join(dir, 'source.json'), JSON.stringify(sidecar.item, null, 2));
+  return { ...asset, name: sidecar.item.title || asset.name, source: sidecar.source };
+}
+
 async function buildAsset(src: string): Promise<Asset> {
   const id = await hashFile(src);
   const dir = path.join(outRoot, id);
   const manifest = path.join(dir, 'asset.json');
-  if (fs.existsSync(manifest)) return JSON.parse(fs.readFileSync(manifest, 'utf8')) as Asset;
+  const sidecar = readSidecar(src);
+  if (fs.existsSync(manifest)) {
+    const cached = JSON.parse(fs.readFileSync(manifest, 'utf8')) as Asset;
+    if (!sidecar) return cached;
+    const updated = withSource(cached, dir, sidecar);
+    fs.writeFileSync(manifest, JSON.stringify(updated, null, 2));
+    return updated;
+  }
 
   fs.mkdirSync(dir, { recursive: true });
   const info = await probe(src);
@@ -123,7 +149,7 @@ async function buildAsset(src: string): Promise<Asset> {
       ? encodeProxy(src, path.join(dir, 'l2.mp4'), info, even(Math.min(L2_HEIGHT, info.height)), 23, 8000)
       : Promise.resolve(null),
   ]);
-  const asset: Asset = {
+  const asset: Asset = withSource({
     id,
     name: path.basename(src, path.extname(src)),
     duration: Number(info.duration.toFixed(4)),
@@ -133,7 +159,7 @@ async function buildAsset(src: string): Promise<Asset> {
     l0,
     l1,
     l2,
-  };
+  }, dir, sidecar);
   fs.writeFileSync(manifest, JSON.stringify(asset, null, 2));
   return asset;
 }
@@ -165,11 +191,14 @@ await pool(sources, Math.max(1, Math.floor(defaultConcurrency / 2)), async (src)
 
 // Dedupe by content hash; two source files with identical bytes are one asset.
 const unique = [...new Map(assets.map((a) => [a.id, a])).values()].sort((a, b) => a.name.localeCompare(b.name));
-const library: Library = { version: 1, assets: unique };
-fs.writeFileSync(path.join(outRoot, 'library.json'), JSON.stringify(library));
+const libraryPath = path.join(outRoot, 'library.json');
+const existing = merge && fs.existsSync(libraryPath) ? (JSON.parse(fs.readFileSync(libraryPath, 'utf8')) as Library).assets : [];
+const fresh = new Set(unique.map((a) => a.id));
+const library: Library = { version: 1, assets: [...existing.filter((a) => !fresh.has(a.id)), ...unique] };
+fs.writeFileSync(libraryPath, JSON.stringify(library));
 
 const sum = (f: (a: Asset) => number) => unique.reduce((s, a) => s + f(a), 0);
 const mb = (b: number) => `${(b / 1e6).toFixed(1)} MB`;
-console.log(`\n${unique.length} assets in ${((performance.now() - t0) / 1000).toFixed(1)}s${failed ? `, ${failed} failed` : ''}`);
+console.log(`\n${unique.length} assets in ${((performance.now() - t0) / 1000).toFixed(1)}s${failed ? `, ${failed} failed` : ''}${merge ? `; library now ${library.assets.length}` : ''}`);
 console.log(`  L0 ${mb(sum((a) => a.l0?.bytes ?? 0))}  L1 ${mb(sum((a) => a.l1.bytes))}  L2 ${mb(sum((a) => a.l2?.bytes ?? 0))}`);
 process.exitCode = failed ? 1 : 0;

@@ -56,7 +56,7 @@ export function FeedPane() {
   const anchorRef = useRef<number | null>(null);
 
   const collected = useMemo(() => collectedAssetIds(placements), [placements]);
-  const order = useMemo(() => shuffled(Object.values(assets).filter((a) => a.origin === 'library' && a.status === 'ready'), seed), [assets, seed]);
+  const order = useMemo(() => shuffled(Object.values(assets).filter((a) => (a.origin === 'library' || a.origin === 'scraper') && a.status === 'ready'), seed), [assets, seed]);
   const visible = useMemo(() => (hideAdded ? order.filter((a) => !collected.has(a.id)) : order), [order, hideAdded, collected]);
 
   const { tiles, height } = useMemo(() => {

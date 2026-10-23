@@ -55,6 +55,92 @@ To use real reference instead, drop `.mp4`/`.mov`/`.webm` files in a folder and
 run `npm run build:proxies -- --in path/to/folder`. Re-runs only process new
 files; assets are keyed by content hash.
 
+### Scraping a site
+
+```bash
+npm run scrape -- https://studio.example/work
+```
+
+```bash
+FFMPEG=/path/to/ffmpeg npm run build:proxies -- --in media/scraped/studio.example --merge
+```
+
+The first command collects every video on the site into
+`media/scraped/<host>/`: each file named by content hash, a `<id>.json`
+sidecar beside it, and `scrape.json` for the whole run. The second builds
+proxies and adds them to the library (and so the Feed) without dropping what
+is already there; `--build` on the scrape does that and then the analysis
+passes below. A path in the URL
+(`/work`) puts that section's pages first; the rest of the site is still
+crawled, up to `--max-pages`.
+
+It works in three tiers and only reaches for the next one when the last one
+left signs of more:
+
+1. **Static**: robots.txt, sitemaps and a same-site crawl of the HTML as
+   served. Extractors read `<video>`/`<source>` (including lazy `data-*` and
+   JSON source lists), player iframes and ids (Vimeo, YouTube, Wistia, Mux,
+   Cloudflare Stream, ...), og/twitter video tags, JSON-LD `VideoObject`, and
+   media URLs inside inline data (`__NEXT_DATA__`, Next's RSC payload, Framer,
+   Nuxt) with the fields around them.
+2. **Render**: headless Chrome (your installed Google Chrome, via
+   playwright-core) for pages that look client-rendered or hold players with
+   no visible source. It scrolls with real wheel events, triggers
+   hover-to-play cards, records media requests, and re-runs the extractors on
+   the live DOM.
+3. **Agent**: Claude driving that browser through the browser use toolset,
+   for what scripts can't reach: "Load more" buttons, filters, project
+   modals, click-to-play players. Pages it loads are scanned automatically;
+   it adds project metadata (title, client, credits) as it goes. Runs when
+   the crawl finds nothing, or a page has a "Load more" control, player
+   markup with no video, or more sourceless `<video>`s than videos found.
+   Needs `ANTHROPIC_API_KEY` (environment or `.env.local`); defaults to
+   Opus 5.5 (`--agent-model`), about $1–3 a site when it runs.
+   `--agent always|off` overrides.
+
+Each video keeps what the site said about it: the page (title, description,
+og, JSON-LD, published date), every place it appeared with its card text,
+heading, caption and link, the `<video>` attributes (autoplay/loop/poster),
+the player's own metadata via yt-dlp, and the file's probe (size, codec,
+duration, fps). With an API key, enrichment structures each project page
+into title, client, agency, year, credits and tags with Haiku 5.5 (about
+$0.001 a page; `--no-enrich` skips it, `--enrich-model` swaps the model).
+Downloads go through
+yt-dlp for players and streams (`pip install yt-dlp`; `YTDLP` overrides) and
+plain HTTP for files. Bot checks are reported, never worked around, and
+robots.txt is honoured. `npm run scrape -- --help` lists the options.
+
+### Tags and embeddings
+
+```bash
+FFMPEG=/path/to/ffmpeg npm run embed                        # SigLIP 2 vectors for every clip, local and free
+```
+
+```bash
+FFMPEG=/path/to/ffmpeg npm run tag -- --estimate            # free token count, projected cost
+```
+
+```bash
+FFMPEG=/path/to/ffmpeg npm run tag                          # caption + motion tags for untagged clips
+```
+
+- **Embeddings** run SigLIP 2 (base, 224 px) in Node through transformers.js:
+  8 frames of each clip's L1 proxy, L2-normalized, plus their mean, in
+  `<id>/embedding.f32`; `embeddings.json` + `embeddings.f32` pack the means
+  for search (5 MB for 1,635 clips). Text embeds into the same space, so
+  `npm run embed -- --query "liquid chrome 3D render"` ranks the library
+  with no tags at all, and `--like <id>` finds similar clips. The weights
+  (~700 MB) download once into `media/models/`; about 5 minutes for 1,600
+  clips on an M4 Pro.
+- **Tags** send one contact sheet per clip (16 frames in time order, from
+  the L1 proxy) to Haiku 5.5 with the motion vocabulary in
+  `src/media/vocabulary.ts` (technique, camera, easing, pacing, use). Back
+  come a one-line caption, tags from that vocabulary only, and up to 8 free
+  visual tags (`visual:chrome`, `visual:phone-mockup`). They land in
+  `analysis` on each asset and in `<id>/tags.json`. Measured: about 3,400
+  input and 175 output tokens, $0.0004 a clip. `--only <site|id>`,
+  `--limit`, `--force` and `--model` narrow or change a run.
+
 ### Canvas controls
 
 Two-finger scroll pans; pinch, ctrl/cmd + wheel or a mouse wheel zooms.

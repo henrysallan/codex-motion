@@ -162,7 +162,14 @@ export function collectedAssetIds(placements = get().placements): Set<string> {
 // ---- loading -------------------------------------------------------------------
 
 function libraryRecords(library: Library): AssetRecord[] {
-  return library.assets.map((a) => ({ ...a, origin: 'library', status: 'ready', addedBy: 'library', addedAt: 0 }));
+  return library.assets.map((a) => ({
+    ...a,
+    origin: a.source ? 'scraper' : 'library',
+    status: 'ready',
+    addedBy: 'library',
+    addedAt: a.source ? Date.parse(a.source.scrapedAt) || 0 : 0,
+    ...(a.source ? { sourceUrl: a.source.pageUrl, sourceTitle: a.source.pageTitle ?? a.source.title } : {}),
+  }));
 }
 
 function mulberry32(a: number) {
