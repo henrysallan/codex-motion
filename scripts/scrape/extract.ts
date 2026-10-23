@@ -321,14 +321,14 @@ export function wantsRender(signals: PageSignals, candidates: number): boolean {
 // tier; empty when nothing suggests it. A few sourceless <video>s beside
 // plenty of found videos are usually a player's spare elements (Koto keeps
 // empty placeholders next to its Vimeo embeds); more of them than videos
-// found is a real gap. A "Load more" control on most pages is site chrome
-// (a related-projects strip), so callers pass moreIsChrome for all but the
-// listing page.
-export function agentReasons(s: PageSignals, found: number, { moreIsChrome = false } = {}): string[] {
+// found is a real gap. A "Load more" control or player-ish markup on most
+// pages is site chrome (a related-projects strip, a template class), so
+// callers pass moreIsChrome / hintsAreChrome for all but the listing page.
+export function agentReasons(s: PageSignals, found: number, { moreIsChrome = false, hintsAreChrome = false } = {}): string[] {
   const why: string[] = [];
   if (s.unresolvedVideos > found) why.push(`${s.unresolvedVideos} <video> without a visible source`);
   if (s.moreButton && !moreIsChrome) why.push('a "Load more"-style control');
-  if (s.playerHints && !found) why.push('player markup but no video found');
+  if (s.playerHints && !found && !hintsAreChrome) why.push('player markup but no video found');
   return why;
 }
 

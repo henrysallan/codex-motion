@@ -232,3 +232,9 @@ test('a "Load more" on every page is site chrome, except on the listing', () => 
   assert.deepEqual(agentReasons(s, 3, { moreIsChrome: true }), []);
   assert.equal(agentReasons(s, 3).length, 1);
 });
+
+test('template-wide player markup is chrome too', () => {
+  const s: PageSignals = { videoTags: 0, unresolvedVideos: 0, playerHints: 3, moreButton: false, textLength: 500, scripts: 2, shell: false };
+  assert.deepEqual(agentReasons(s, 0, { hintsAreChrome: true }), []);
+  assert.equal(agentReasons(s, 0).length, 1);
+});

@@ -301,13 +301,20 @@ const rendered = await renderPass();
 
 // ---- 3. agent -----------------------------------------------------------------------
 
+// Pages that don't hold portfolio work, whatever their markup suggests.
+const UTILITY = /(^|\/)(privacy|cookies?|legal|terms|imprint|impressum|contact|careers|jobs|blog|news|journal|press|people|team|author|tags?|category|categories|search|login|account|cart|shop)([-/_.]|$)/i;
+
 function suspects(): { url: string; why: string[] }[] {
   const out: { url: string; why: string[] }[] = [];
-  const withMore = [...signals.values()].filter((s) => s.moreButton).length;
-  const moreEverywhere = signals.size >= 10 && withMore / signals.size > 0.3;
+  const common = (has: (s: PageSignals) => boolean) => signals.size >= 10 && [...signals.values()].filter(has).length / signals.size > 0.3;
+  const moreEverywhere = common((s) => s.moreButton);
+  const hintsEverywhere = common((s) => s.playerHints > 0);
   const listing = normalizePage(root!.toString());
   for (const [url, s] of signals) {
-    const why = agentReasons(s, keysOn(url).size, { moreIsChrome: moreEverywhere && url !== listing });
+    const u = new URL(url);
+    if (url !== listing && (UTILITY.test(u.pathname) || u.searchParams.has('post_type'))) continue;
+    const chrome = url !== listing;
+    const why = agentReasons(s, keysOn(url).size, { moreIsChrome: moreEverywhere && chrome, hintsAreChrome: hintsEverywhere && chrome });
     if (why.length) out.push({ url, why });
   }
   return out;
@@ -397,6 +404,7 @@ for (const item of items) {
   if (p.status === 'downloaded' && p.file && fs.existsSync(path.join(outDir, p.file))) {
     Object.assign(item, { status: 'downloaded', id: p.id, file: p.file, embed: p.embed ?? item.embed });
     item.media = { ...p.media, urls: item.media.urls };
+    if (p.titleSource === 'project') Object.assign(item, { title: p.title, titleSource: p.titleSource });
     titleFromEmbed(item);
     item.project ??= p.project;
     reused++;
