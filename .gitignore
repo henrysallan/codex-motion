@@ -1,9 +1,10 @@
 node_modules
 dist
 .DS_Store
-# Generated media: test sources and the proxy ladder built from them.
-media/
-public/media/
+# Generated media: test sources, scraped videos and the proxy ladder built
+# from them. Anchored to the root so src/media/ (code) isn't caught too.
+/media/
+/public/media/
 
 # Local tool config
 .claude/

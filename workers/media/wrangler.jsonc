@@ -1,0 +1,14 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "codex-motion-media",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "routes": [{ "pattern": "motion-media.isthishenry.com", "custom_domain": true }],
+  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "codex-motion" }],
+  "vars": {
+    // Public values; uploads are checked against this project's auth.
+    "SUPABASE_URL": "https://nmmddnszqlrplwvcqgdn.supabase.co",
+    "SUPABASE_ANON_KEY": "sb_publishable_trFjPILM9lsXSW-zHSDxpQ_8KmZlyGH"
+  },
+  "observability": { "enabled": true }
+}
