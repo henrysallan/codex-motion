@@ -49,6 +49,27 @@ export function onAuthChange(cb: (session: Session | null) => void): () => void 
   return () => listeners.delete(l);
 }
 
+// Which sign-in methods the project has turned on (Supabase's public auth
+// settings), so the sign-in screen only offers ones that work.
+export async function enabledProviders(): Promise<{ google: boolean; email: boolean }> {
+  try {
+    const res = await fetch(`${config.supabaseUrl}/auth/v1/settings`, { headers: { apikey: config.supabaseAnonKey! } });
+    const s = (await res.json()) as { external?: Record<string, boolean> };
+    return { google: !!s.external?.google, email: !!s.external?.email };
+  } catch {
+    return { google: false, email: true };
+  }
+}
+
+// Emails a one-time sign-in link that returns to this page.
+export async function signInWithEmail(email: string): Promise<void> {
+  const { error } = await supabase!.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: location.origin + location.pathname, shouldCreateUser: true },
+  });
+  if (error) throw error;
+}
+
 export async function signInWithGoogle(): Promise<void> {
   await supabase?.auth.signInWithOAuth({
     provider: 'google',

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { remoteEnabled } from '../config.ts';
-import { signInWithGoogle, useAuth } from '../data/supabase.ts';
+import { enabledProviders, signInWithEmail, signInWithGoogle, useAuth } from '../data/supabase.ts';
 import { Button } from '../ui/controls.tsx';
 import { boardRegistry } from './canvas/registry.ts';
 import { ingestFiles, resumeIngests, uploadPending } from './ingest.ts';
@@ -105,23 +105,69 @@ function PublicApp({ slug }: { slug: string }) {
 }
 
 function SignIn() {
-  const [busy, setBusy] = useState(false);
+  const [providers, setProviders] = useState<{ google: boolean; email: boolean } | null>(null);
+  const [email, setEmail] = useState('');
+  const [state, setState] = useState<{ busy?: boolean; sent?: string; error?: string }>({});
+  useEffect(() => {
+    void enabledProviders().then(setProviders);
+  }, []);
+
+  const sendLink = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const address = email.trim();
+    if (!address) return;
+    setState({ busy: true });
+    try {
+      await signInWithEmail(address);
+      setState({ sent: address });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setState({ error: /rate limit/i.test(message) ? 'Too many sign-in emails for now. Try again in a little while.' : message });
+    }
+  };
+
   return (
     <div className="signin">
       <div className="signin-card">
         <h1>codex-motion</h1>
-        <p>A reference canvas where every clip plays at once.</p>
-        <Button
-          variant="primary"
-          disabled={busy}
-          onClick={() => {
-            setBusy(true);
-            void signInWithGoogle().catch(() => setBusy(false));
-          }}
-        >
-          <GoogleMark />
-          Continue with Google
-        </Button>
+        {state.sent ? (
+          <>
+            <p>
+              Check <strong>{state.sent}</strong> for a sign-in link. Open it in this browser.
+            </p>
+            <button type="button" className="btn ghost sm" onClick={() => setState({})}>
+              Use a different email
+            </button>
+          </>
+        ) : (
+          <>
+            <p>A reference canvas where every clip plays at once.</p>
+            {providers?.google && (
+              <Button variant="primary" onClick={() => void signInWithGoogle()}>
+                <GoogleMark />
+                Continue with Google
+              </Button>
+            )}
+            {providers?.google && providers.email && <span className="signin-or">or</span>}
+            {(providers?.email ?? true) && (
+              <form className="signin-email" onSubmit={sendLink}>
+                <input
+                  type="email"
+                  required
+                  autoComplete="email"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  aria-label="Email"
+                />
+                <Button type="submit" variant={providers?.google ? 'secondary' : 'primary'} disabled={state.busy}>
+                  Email me a sign-in link
+                </Button>
+              </form>
+            )}
+            {state.error && <p className="signin-error">{state.error}</p>}
+          </>
+        )}
       </div>
     </div>
   );
