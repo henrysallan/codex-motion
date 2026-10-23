@@ -21,7 +21,7 @@ import type { Asset, AssetAnalysis, Library } from '../src/media/library.ts';
 import { labels, slug, TAG_GROUPS, type TagGroup, VOCABULARY } from '../src/media/vocabulary.ts';
 import { addUsage, BULK_MODEL, cost, dollars, emptyUsage, hasCredentials, loadEnv, price } from './lib/claude.ts';
 import { arg, assertFfmpeg, pool } from './lib/ffmpeg.ts';
-import { contactSheet } from './lib/frames.ts';
+import { contactSheet, proxyInput } from './lib/frames.ts';
 
 loadEnv();
 if (!hasCredentials()) {
@@ -32,7 +32,6 @@ assertFfmpeg();
 
 const model = arg('model', BULK_MODEL);
 const outRoot = path.resolve(arg('out', 'public/media'));
-const publicRoot = path.resolve('public');
 const only = arg('only', '');
 const limit = Number(arg('limit', '0')) || Infinity;
 const force = process.argv.includes('--force');
@@ -89,7 +88,7 @@ fs.mkdirSync(sheetDir, { recursive: true });
 
 async function request(a: Asset): Promise<{ system: string; content: Anthropic.ContentBlockParam[] }> {
   const sheet = path.join(sheetDir, `${a.id}.jpg`);
-  await contactSheet(path.join(publicRoot, a.l1.url), sheet, a);
+  await contactSheet(proxyInput(a.l1.url), sheet, a);
   const data = fs.readFileSync(sheet).toString('base64');
   fs.rmSync(sheet, { force: true });
   return {

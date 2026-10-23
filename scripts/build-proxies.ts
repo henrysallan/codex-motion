@@ -189,6 +189,20 @@ await pool(sources, Math.max(1, Math.floor(defaultConcurrency / 2)), async (src)
   if (process.stdout.isTTY) process.stdout.write(`\r  ${done}/${sources.length}`);
 });
 
+// Sidecars whose source file is gone (deleted once its asset was built and
+// uploaded) still refresh that asset's title and source.
+const withFile = new Set(sources.map((src) => path.basename(src, path.extname(src))));
+for (const f of fs.readdirSync(srcDir)) {
+  const id = /^([0-9a-f]{16})\.json$/.exec(f)?.[1];
+  const manifest = id ? path.join(outRoot, id, 'asset.json') : '';
+  if (!id || withFile.has(id) || !fs.existsSync(manifest)) continue;
+  const sidecar = readSidecar(path.join(srcDir, `${id}.mp4`));
+  if (!sidecar) continue;
+  const asset = withSource(JSON.parse(fs.readFileSync(manifest, 'utf8')) as Asset, path.join(outRoot, id), sidecar);
+  fs.writeFileSync(manifest, JSON.stringify(asset, null, 2));
+  assets.push(asset);
+}
+
 // Dedupe by content hash; two source files with identical bytes are one asset.
 const unique = [...new Map(assets.map((a) => [a.id, a])).values()].sort((a, b) => a.name.localeCompare(b.name));
 const libraryPath = path.join(outRoot, 'library.json');

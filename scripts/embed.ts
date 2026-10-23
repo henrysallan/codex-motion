@@ -16,7 +16,10 @@ import path from 'node:path';
 import { AutoProcessor, AutoTokenizer, env, RawImage, SiglipTextModel, SiglipVisionModel } from '@huggingface/transformers';
 import type { EmbeddingIndex, Library } from '../src/media/library.ts';
 import { arg, assertFfmpeg, pool } from './lib/ffmpeg.ts';
-import { rgbFrames } from './lib/frames.ts';
+import { proxyInput, rgbFrames } from './lib/frames.ts';
+import { loadEnv } from './lib/claude.ts';
+
+loadEnv();
 
 const EMBED_MODEL = 'onnx-community/siglip2-base-patch16-224-ONNX';
 const SIZE = 224;
@@ -113,7 +116,7 @@ if (todo.length) {
   let failed = 0;
   await pool(todo, 4, async (asset) => {
     try {
-      const frames = await rgbFrames(path.join(publicRoot, asset.l1.url), asset, FRAMES, SIZE);
+      const frames = await rgbFrames(proxyInput(asset.l1.url), asset, FRAMES, SIZE);
       if (!frames.length) throw new Error('no frames decoded');
       const flat = await infer(frames);
       const width = flat.length / frames.length;

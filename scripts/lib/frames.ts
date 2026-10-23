@@ -2,7 +2,20 @@
 // the L1 proxy (480p): decoding it is cheap and it's plenty for a vision
 // model or an embedding.
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { ffmpeg, ffmpegPipe } from './ffmpeg.ts';
+
+// Where to read a proxy ("media/<id>/l1.mp4"): public/ when it's on disk,
+// else the media Worker (VITE_MEDIA_URL); local copies of uploaded proxies
+// may be deleted to save space, and ffmpeg reads URLs as well as files.
+export function proxyInput(url: string): string {
+  const local = path.resolve('public', url);
+  if (fs.existsSync(local)) return local;
+  const base = process.env.VITE_MEDIA_URL?.replace(/\/$/, '');
+  if (!base) throw new Error(`${url} isn't on disk and VITE_MEDIA_URL isn't set`);
+  return `${base}/${url}`;
+}
 
 const GUTTER = 8;
 

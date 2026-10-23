@@ -401,7 +401,10 @@ for (const item of items) {
   const p = prevByKey.get(item.key);
   if (!p) continue;
   item.firstSeenAt = p.firstSeenAt ?? item.firstSeenAt;
-  if (p.status === 'downloaded' && p.file && fs.existsSync(path.join(outDir, p.file))) {
+  // Done if the file is here, or if it's already in the library (originals
+  // of uploaded assets may be deleted to save space).
+  const built = !!p.id && fs.existsSync(path.join('public', 'media', p.id, 'asset.json'));
+  if (p.status === 'downloaded' && p.file && (built || fs.existsSync(path.join(outDir, p.file)))) {
     Object.assign(item, { status: 'downloaded', id: p.id, file: p.file, embed: p.embed ?? item.embed });
     item.media = { ...p.media, urls: item.media.urls };
     if (p.titleSource === 'project') Object.assign(item, { title: p.title, titleSource: p.titleSource });
@@ -416,6 +419,20 @@ const carried = previous.filter((p) => !current.has(p.key));
 // ---- 5. download --------------------------------------------------------------------
 
 fs.mkdirSync(outDir, { recursive: true });
+// robots.txt covers the site's own media too: a file under a disallowed
+// path (Panoply serves its videos from /api, which it disallows) isn't
+// fetched, even though a page links it.
+for (const item of items) {
+  if (item.status !== 'found') continue;
+  const g = groupOf.get(item)!;
+  const blocked = g.urls.filter((u) => sameSite(u.url, root!) && !robots.allowed(u.url));
+  if (!blocked.length) continue;
+  g.urls = g.urls.filter((u) => !blocked.includes(u));
+  if (!g.urls.length) {
+    item.status = 'skipped';
+    item.reason = 'disallowed by robots.txt';
+  }
+}
 const todo = items.filter((i) => i.status === 'found');
 if (todo.some((i) => groupOf.get(i)!.urls.some((u) => u.kind !== 'file')) && !ytdlpVersion()) {
   log('  yt-dlp not found: Vimeo, YouTube and stream videos will fail. Install it (pip install yt-dlp) or set YTDLP.');

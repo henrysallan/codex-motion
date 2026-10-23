@@ -22,9 +22,12 @@ if (!base || !token) {
 
 const publicDir = path.resolve('public');
 const library = JSON.parse(fs.readFileSync(path.join(publicDir, 'media/library.json'), 'utf8')) as Library;
-const files = library.assets.flatMap((a) => [a.l0?.url, a.l1.url, a.l2?.url].filter((u): u is string => !!u));
+// Local copies of uploaded proxies may have been deleted to save space;
+// those are checked against R2 rather than sent.
+const all = library.assets.flatMap((a) => [a.l0?.url, a.l1.url, a.l2?.url].filter((u): u is string => !!u));
+const files = all.filter((f) => fs.existsSync(path.join(publicDir, f)));
 const totalBytes = files.reduce((s, f) => s + fs.statSync(path.join(publicDir, f)).size, 0);
-console.log(`${library.assets.length} assets, ${files.length} files, ${(totalBytes / 1e6).toFixed(0)} MB → ${base}`);
+console.log(`${library.assets.length} assets, ${files.length} files on disk, ${(totalBytes / 1e6).toFixed(0)} MB → ${base}`);
 
 let done = 0;
 let sent = 0;
@@ -70,6 +73,19 @@ async function uploadMultipart(url: string, file: string): Promise<void> {
     throw e;
   }
 }
+
+// What isn't on disk must be in R2 already, or its asset would point at nothing.
+const remoteOnly = all.filter((f) => !files.includes(f));
+let missing = 0;
+await pool(remoteOnly, 16, async (key) => {
+  const head = await retry(key, () => fetch(`${base}/${key}`, { method: 'HEAD' }));
+  if (!head.ok) {
+    missing++;
+    console.error(`missing locally and in R2: ${key}`);
+  }
+});
+if (missing) process.exit(1);
+if (remoteOnly.length) console.log(`  ${remoteOnly.length} files only in R2, all present`);
 
 await pool(files, 6, async (key) => {
   const url = `${base}/${key}`;
