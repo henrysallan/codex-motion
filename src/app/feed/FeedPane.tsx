@@ -2,6 +2,10 @@
 // shuffle (scrolling back shows the same order; reshuffle draws a new one).
 // Select clips (click, shift-click, cmd-click, marquee) and add them to the
 // active target, pick a collection, or drag them onto the open canvas.
+//
+// The library runs to thousands of clips, so only tiles near the viewport
+// are mounted, and the engine gets items for a wider band: it loads sprites
+// two viewports either side of the visible area, and needs the items to.
 
 import { Check, Crosshair, EyeOff, FolderPlus, Plus, Search, Shuffle, X } from 'lucide-react';
 import { useCallback, useMemo, useRef, useState } from 'react';
@@ -14,7 +18,7 @@ import { addAssets } from '../actions.ts';
 import { type DropTarget, dropTargets } from '../events.ts';
 import { plural } from '../format.ts';
 import { justifiedRows } from '../layout/arrange.ts';
-import { fractionAcross, ScrollSurface, type SurfaceHandle } from '../ScrollSurface.tsx';
+import { fractionAcross, rowsInBand, ScrollSurface, type ScrollWindow, type SurfaceHandle } from '../ScrollSurface.tsx';
 import {
   collectedAssetIds,
   createCollection,
@@ -31,6 +35,10 @@ const PAD = 12;
 const GAP = 6;
 const ROW_H = 120;
 const DRAG_THRESHOLD = 5;
+// Viewports beyond the visible band to mount tiles for, and to send the
+// engine items for (at least its sprite residency, RESIDENT_VIEWPORTS).
+const DOM_OVERSCAN = 0.5;
+const ENGINE_OVERSCAN = 2.5;
 
 interface Tile {
   asset: AssetRecord;
@@ -38,6 +46,11 @@ interface Tile {
   y: number;
   w: number;
   h: number;
+}
+
+// Tiles [start, end) within `overscan` viewports of the visible band.
+function nearViewport(tiles: Tile[], win: ScrollWindow | null, overscan: number): [number, number] {
+  return win ? rowsInBand(tiles, win.top - overscan * win.height, win.bottom + overscan * win.height) : [0, 0];
 }
 
 export function FeedPane() {
@@ -50,6 +63,7 @@ export function FeedPane() {
   const theme = useResolvedTheme();
   const [size, setSize] = useState({ w: 0, h: 0 });
   const onResize = useCallback((w: number, h: number) => setSize((s) => (s.w === w && s.h === h ? s : { w, h })), []);
+  const [win, setWin] = useState<ScrollWindow | null>(null);
   const surface = useRef<SurfaceHandle | null>(null);
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const [addAnchor, setAddAnchor] = useState<HTMLElement | null>(null);
@@ -68,10 +82,16 @@ export function FeedPane() {
     return { tiles, height: last ? last.y + last.h + 2 + PAD : 0 };
   }, [visible, size.w]);
 
-  const items = useMemo<ViewItem[]>(
-    () => tiles.map((t, i) => ({ id: i + 1, assetId: t.asset.id, x: t.x, y: t.y, w: t.w, h: t.h, z: i })),
-    [tiles],
-  );
+  const [domStart, domEnd] = useMemo(() => nearViewport(tiles, win, DOM_OVERSCAN), [tiles, win]);
+  const items = useMemo<ViewItem[]>(() => {
+    const [start, end] = nearViewport(tiles, win, ENGINE_OVERSCAN);
+    const out: ViewItem[] = [];
+    for (let i = start; i < end; i++) {
+      const t = tiles[i];
+      out.push({ id: i + 1, assetId: t.asset.id, x: t.x, y: t.y, w: t.w, h: t.h, z: i });
+    }
+    return out;
+  }, [tiles, win]);
 
   const selected = useMemo(() => new Set(selection), [selection]);
   const overlay = useMemo<OverlayRect[]>(() => {
@@ -225,24 +245,27 @@ export function FeedPane() {
           </span>
         )}
       </div>
-      <ScrollSurface items={items} overlay={overlay} contentHeight={height} onResize={onResize} handle={surface} onPointerDown={onBackgroundDown}>
-        {tiles.map((t, i) => (
-          <div
-            key={t.asset.id}
-            className={`feed-tile ${selected.has(t.asset.id) ? 'selected' : ''}`}
-            style={{ left: t.x, top: t.y, width: t.w, height: t.h }}
-            onPointerDown={(e) => onTileDown(e, i)}
-            onPointerMove={(e) => engine.scrub(t.asset.id, fractionAcross(e))}
-            onPointerLeave={() => engine.scrub(null)}
-          >
-            {collected.has(t.asset.id) && (
-              <span className="added-mark" title="In a collection">
-                <Check size={11} strokeWidth={3} />
-              </span>
-            )}
-            <span className="tile-name">{t.asset.name}</span>
-          </div>
-        ))}
+      <ScrollSurface items={items} overlay={overlay} contentHeight={height} onResize={onResize} onWindow={setWin} handle={surface} onPointerDown={onBackgroundDown}>
+        {tiles.slice(domStart, domEnd).map((t, k) => {
+          const i = domStart + k;
+          return (
+            <div
+              key={t.asset.id}
+              className={`feed-tile ${selected.has(t.asset.id) ? 'selected' : ''}`}
+              style={{ left: t.x, top: t.y, width: t.w, height: t.h }}
+              onPointerDown={(e) => onTileDown(e, i)}
+              onPointerMove={(e) => engine.scrub(t.asset.id, fractionAcross(e))}
+              onPointerLeave={() => engine.scrub(null)}
+            >
+              {collected.has(t.asset.id) && (
+                <span className="added-mark" title="In a collection">
+                  <Check size={11} strokeWidth={3} />
+                </span>
+              )}
+              <span className="tile-name">{t.asset.name}</span>
+            </div>
+          );
+        })}
       </ScrollSurface>
       {addAnchor && <AddToPopover anchor={addAnchor} assetIds={selection} onClose={() => setAddAnchor(null)} onAdded={() => select([])} />}
     </div>

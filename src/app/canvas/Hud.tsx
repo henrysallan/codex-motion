@@ -53,7 +53,9 @@ export function Hud({ ctrl, onClose }: { ctrl: BoardController; onClose: () => v
               `visible ${s.visible}  L0 ${s.tiers[0]}  L1 ${s.tiers[1]}  L2 ${s.tiers[2]}`,
               `decoders ${s.decoders} (${s.decodersL2} L2)  budget ${s.budget}`,
               `waiting ${s.streamsWaiting}  late ${(s.lateRatio * 100).toFixed(1)}%${s.failed ? `  failed ${s.failed}` : ''}`,
-              `sprites ${s.l0Resident}/${s.l0Total}  atlas ${s.atlasLayers}L ${mb(s.l0Bytes)}`,
+              `sprites ${s.l0Resident}/${s.l0Total}${s.l0Missing ? `  missing ${s.l0Missing}` : ''}${s.l0Pending ? `  loading ${s.l0Pending}` : ''}`,
+              `atlas ${s.atlasLayersUsed}/${s.atlasLayers}L of ${s.atlasCap}  ${mb(s.l0BytesUsed)}/${mb(s.l0Bytes)}`,
+              `cached ${s.l0Cached}  evicted ${s.l0Evictions}`,
             ].join('\n')
           : 'starting…'}
       </pre>

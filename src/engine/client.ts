@@ -12,6 +12,7 @@ import type {
   OverlayRect,
   ToWorker,
   ViewItem,
+  ViewKind,
   ViewStyle,
 } from './protocol.ts';
 
@@ -21,7 +22,7 @@ export class EngineView {
   private readonly client: EngineClient;
   private readonly observer: ResizeObserver;
 
-  constructor(client: EngineClient, id: number, canvas: HTMLCanvasElement, style: ViewStyle) {
+  constructor(client: EngineClient, id: number, canvas: HTMLCanvasElement, kind: ViewKind, style: ViewStyle) {
     this.client = client;
     this.id = id;
     this.canvas = canvas;
@@ -32,6 +33,7 @@ export class EngineView {
       {
         type: 'view',
         id,
+        kind,
         canvas: offscreen,
         width: Math.max(1, Math.round(rect.width * dpr)),
         height: Math.max(1, Math.round(rect.height * dpr)),
@@ -96,8 +98,8 @@ export class EngineClient {
     return () => this.listeners.delete(listener);
   }
 
-  createView(canvas: HTMLCanvasElement, style: ViewStyle): EngineView {
-    return new EngineView(this, this.nextView++, canvas, style);
+  createView(canvas: HTMLCanvasElement, kind: ViewKind, style: ViewStyle): EngineView {
+    return new EngineView(this, this.nextView++, canvas, kind, style);
   }
 
   // Upserts asset metadata. Relative URLs inside a worker resolve against
