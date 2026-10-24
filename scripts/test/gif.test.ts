@@ -48,6 +48,7 @@ test('GIF URLs are files; spacers, loaders and optimizer stills are not', () => 
   assert.equal(classifyMedia('https://studio.example/_next/image?url=%2Fwork%2Floop.gif&w=1920&q=75')?.url, 'https://studio.example/work/loop.gif');
   assert.equal(classifyMedia('https://studio.example/_next/image?url=%2Fwork%2Fstill.jpg&w=1920&q=75'), null);
   assert.ok(qualityScore('https://studio.example/up/loop.gif') > qualityScore('https://studio.example/up/loop-720x405.gif'));
+  assert.equal(classifyMedia('https://studio.example/up/loop-640x640.gif')?.key, classifyMedia('https://studio.example/up/loop.gif')?.key);
 });
 
 test('srcset entries come largest first', () => {
@@ -73,4 +74,12 @@ test('finds GIFs in img, srcset, lazy attributes and CSS backgrounds; one per el
   const [loop] = groupItems(candidates);
   assert.equal(loop.urls[0].url, 'https://studio.example/up/loop.gif');
   assert.equal(loop.urls.length, 3);
+});
+
+test("a WordPress GIF and its resized copy in separate elements are one item, original first", () => {
+  const html = `<html><body><figure><img src="/up/spin-640x640.gif"></figure><a href="/up/spin.gif">Full size</a></body></html>`;
+  const { candidates } = extractPage(html, 'https://studio.example/work/spin', 'static');
+  const groups = groupItems(candidates);
+  assert.equal(groups.length, 1);
+  assert.deepEqual(groups[0].urls.map((u) => u.url), ['https://studio.example/up/spin.gif', 'https://studio.example/up/spin-640x640.gif']);
 });

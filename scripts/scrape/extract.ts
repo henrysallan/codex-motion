@@ -149,6 +149,8 @@ class PageCollector {
     const variants = (extra.variants ?? []).filter((v) => v !== ref.url);
     const found = this.#byKey.get(ref.key) ?? variants.map((v) => this.#byKey.get(classifyMedia(v)?.key ?? '')).find(Boolean);
     if (found) {
+      // A GIF's resized copies share its key but are different files: keep them as fallbacks.
+      if (ref.url !== found.url && GIF.test(ref.url) && !found.variants?.includes(ref.url)) found.variants = [...(found.variants ?? []), ref.url];
       found.element ??= extra.element;
       found.poster ??= extra.poster;
       if (extra.context && !found.context?.heading && !found.context?.text) found.context = { ...extra.context, index: found.context?.index ?? 0 };

@@ -133,7 +133,8 @@ export function classifyMedia(href: string, base?: string): MediaRef | null {
     const inner = u.searchParams.get('url');
     return inner && GIF_EXT.test(inner.split('?')[0]) ? classifyMedia(inner, u.toString()) : null;
   }
-  if (GIF_EXT.test(path)) return GIF_JUNK.test(path) ? null : { kind: 'file', provider: fileProvider(host), key: fileKey(u), url: u.toString() };
+  // WordPress's resized copies ("-640x640.gif") share the original's key.
+  if (GIF_EXT.test(path)) return GIF_JUNK.test(path) ? null : { kind: 'file', provider: fileProvider(host), key: fileKey(u).replace(/-\d{2,4}x\d{2,4}(\.gif)$/i, '$1'), url: u.toString() };
   if (STREAM_EXT.test(path)) {
     const hosted = HOSTED_STREAMS.find(([, p]) => p.test(rest));
     if (hosted) return { kind: 'stream', provider: hosted[0], key: `${hosted[0]}:${hosted[1].exec(rest)![1]}`, url: u.toString() };
