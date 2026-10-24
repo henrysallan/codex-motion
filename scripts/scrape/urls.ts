@@ -40,7 +40,13 @@ const EMBEDS: [provider: string, pattern: RegExp][] = [
   ['brightcove', /^players\.brightcove\.net\/\d+\/[\w-]+\/index\.html\?(?:.*&)?videoId=(\d+)/i],
   ['tiktok', /^(?:www\.)?tiktok\.com\/(?:@[\w.]+\/video|embed(?:\/v2)?)\/(\d+)/i],
   ['instagram', /^(?:www\.)?instagram\.com\/(?:[\w.]+\/)?(?:p|reel|reels|tv)\/([\w-]{6,})/i],
+  // yt-dlp doesn't know FrameRate; the scraper resolves its embeds to their Mux streams in Chrome.
+  ['framerate', /^(?:www\.)?framerate\.tv\/(?:embed|watch|player)\/([\w-]{6,})/i],
 ];
+
+// Mux's per-rendition playlists (one per quality and one for audio) hang
+// off a master on stream.mux.com that the player always loads first.
+export const isMuxRendition = (host: string) => /^manifest-[\w-]+\.(fastly\.)?mux\.com$/.test(host);
 
 // Hosted players we can turn straight into their stream.
 const HOSTED_STREAMS: [provider: string, pattern: RegExp, manifest: (id: string) => string][] = [
@@ -123,9 +129,7 @@ export function classifyMedia(href: string, base?: string): MediaRef | null {
   if (vimeoFile) return { kind: 'file', provider: 'vimeo', key: `vimeo:${vimeoFile[1] ?? vimeoFile[2]}`, url: u.toString() };
 
   if (SEGMENT.test(path)) return null;
-  // Mux's per-rendition playlists (one per quality and one for audio) hang
-  // off a master on stream.mux.com that the player always loads first.
-  if (/^manifest-[\w-]+\.(fastly\.)?mux\.com$/.test(host)) return null;
+  if (isMuxRendition(host)) return null;
   // An image CDN rendering a still of the video (imgix/Sanity ?fm=jpg).
   if (/^(jpe?g|pjpg|png|webp|avif|gif)$/i.test(u.searchParams.get('fm') ?? '')) return null;
   // Next.js's image optimizer passes animated GIFs through untouched.
@@ -149,7 +153,7 @@ export function classifyMedia(href: string, base?: string): MediaRef | null {
   }
   for (const [provider, p] of EMBEDS) {
     const m = p.exec(rest);
-    if (m) return { kind: 'embed', provider, key: `${provider}:${m[1]}`, url: provider === 'vimeo' ? vimeoPlayer(m[1], u) : u.toString() };
+    if (m) return { kind: 'embed', provider, key: `${provider}:${m[1]}`, url: provider === 'vimeo' ? vimeoPlayer(m[1], u) : provider === 'framerate' ? `https://framerate.tv/embed/${m[1]}` : u.toString() };
   }
   return null;
 }

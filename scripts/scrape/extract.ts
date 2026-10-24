@@ -30,7 +30,7 @@ export interface Extracted {
 const HEADINGS = 'h1,h2,h3,h4,h5,h6';
 const PLAYER_HINT = /(^|[-_\s])(video|videos|player|vimeo|youtube|plyr|vjs|video-js|jwplayer|mux|wistia|reel|showreel)($|[-_\s])/i;
 const KEEP_ATTRS = new Set(['src', 'autoplay', 'loop', 'muted', 'playsinline', 'controls', 'preload', 'poster', 'width', 'height', 'title', 'aria-label', 'alt', 'id', 'class', 'type', 'allow']);
-const MEDIA_HINT = /\.(mp4|m4v|mov|webm|m3u8|mpd|gif)|vimeo|youtu|wistia|mux\.com|videodelivery|cloudflarestream|loom\.com|streamable|vidyard|mediadelivery|jwplayer|jwplatform/i;
+const MEDIA_HINT = /\.(mp4|m4v|mov|webm|m3u8|mpd|gif)|vimeo|youtu|wistia|mux\.com|videodelivery|cloudflarestream|loom\.com|streamable|vidyard|mediadelivery|jwplayer|jwplatform|framerate\.tv/i;
 // Keys that label a video rather than locate it: players put the file's
 // name in a title ("Reel-1080.mp4"), which isn't a URL relative to the page.
 const LABEL_KEY = /^(title|name|alt|caption|label|file_?name|description)$/i;

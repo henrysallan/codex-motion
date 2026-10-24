@@ -278,3 +278,14 @@ test('the Vimeo pacer runs one request at a time and stops after refusals in a r
   );
   assert.equal(settled[4].status === 'fulfilled' && settled[4].value, 't4');
 });
+
+test('FrameRate links are embeds keyed by video, found in iframes and links', () => {
+  for (const u of ['https://framerate.tv/embed/WYPO85Rx', 'https://www.framerate.tv/watch/WYPO85Rx?t=3', 'https://framerate.tv/player/WYPO85Rx']) {
+    assert.deepEqual(classifyMedia(u), { kind: 'embed', provider: 'framerate', key: 'framerate:WYPO85Rx', url: 'https://framerate.tv/embed/WYPO85Rx' });
+  }
+  assert.equal(classifyMedia('https://framerate.tv/profile/someone'), null);
+  const { candidates } = extractPage(html(`<iframe src="https://framerate.tv/embed/AbC123xy" allowfullscreen></iframe><a href="https://framerate.tv/watch/ZzZ987qq">Watch</a>`), PAGE, 'static');
+  assert.deepEqual(candidates.map((c) => c.key), ['framerate:AbC123xy', 'framerate:ZzZ987qq']);
+  // Mux's per-rendition playlists aren't videos of their own.
+  assert.equal(classifyMedia('https://manifest-oci-us-phoenix-1-vop1.fastly.mux.com/abc/rendition.m3u8?cdn=fastly'), null);
+});

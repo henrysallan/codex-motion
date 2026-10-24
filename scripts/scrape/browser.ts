@@ -6,7 +6,7 @@
 
 import { type Browser, type BrowserContext, chromium, type Page } from 'playwright-core';
 import { isChallenge, USER_AGENT } from './site.ts';
-import { classifyMedia, isSegment, type MediaRef, parseUrl } from './urls.ts';
+import { classifyMedia, isMuxRendition, isSegment, type MediaRef, parseUrl } from './urls.ts';
 
 export async function launchBrowser(): Promise<Browser> {
   const exe = process.env.CHROME_PATH;
@@ -54,7 +54,7 @@ export function watchMedia(page: Page, onMedia: (m: SeenMedia) => void): void {
     const url = res.url();
     if (!MEDIA_TYPE.test(type) || isSegment(url) || res.request().redirectedFrom() || inPlayer(safeFrameUrl(() => res.frame()))) return;
     const u = parseUrl(url);
-    if (!u) return;
+    if (!u || isMuxRendition(u.hostname)) return;
     const ref = classifyMedia(url) ?? { kind: /mpegurl|dash/i.test(type) ? 'stream' : 'file', key: `${u.hostname}${u.pathname}${u.search}`, url };
     if (ref.kind === 'embed') return;
     const bytes = Number(res.headers()['content-length'] ?? 0);
@@ -147,6 +147,62 @@ export async function renderPage(context: BrowserContext, url: string): Promise<
     };
   } catch (e) {
     return { url, status: 0, html: '', media: [...media.values()], frames: [], error: (e as Error).message.split('\n')[0] };
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
+export interface FrameRateVideo {
+  // The Mux HLS master the player loads.
+  stream: string;
+  title?: string;
+  uploader?: string;
+}
+
+// FrameRate's pages are an app that looks its video up after loading, so the
+// static HTML doesn't name it. Load the watch page (it titles itself
+// "<title> — <uploader> | FrameRate"; the embed doesn't) or failing that the
+// embed, and read the Mux playback id off its player.
+export async function resolveFrameRate(context: BrowserContext, embedUrl: string): Promise<FrameRateVideo | null> {
+  const id = /framerate\.tv\/\w+\/([\w-]+)/.exec(embedUrl)?.[1];
+  if (!id) return null;
+  for (const kind of ['watch', 'embed']) {
+    const video = await frameRatePage(context, `https://framerate.tv/${kind}/${id}`);
+    if (video) return video;
+  }
+  return null;
+}
+
+async function frameRatePage(context: BrowserContext, url: string): Promise<FrameRateVideo | null> {
+  const page = await context.newPage();
+  let requested: string | undefined;
+  page.on('request', (req) => {
+    requested ??= /^https:\/\/stream\.mux\.com\/([A-Za-z0-9]{20,})\.m3u8/.exec(req.url())?.[1];
+  });
+  await page.route(/\.(mp4|m4v|mov|webm|ts|m4s)(\?|$)/i, (route) => route.abort());
+  const playerId = () => page.evaluate(() => document.querySelector('mux-player, mux-video')?.getAttribute('playback-id') ?? null).catch(() => null);
+  const pageTitle = async () => (await page.title().catch(() => '')).trim();
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    let playback: string | null | undefined;
+    for (let waited = 0; !(playback = (await playerId()) ?? requested) && waited < 15_000; waited += 500) await page.waitForTimeout(500);
+    if (!playback) return null;
+    // The title follows the video's data; give it a moment.
+    let full = await pageTitle();
+    for (let waited = 0; /^FrameRate\b/i.test(full) && waited < 3000; waited += 500) {
+      await page.waitForTimeout(500);
+      full = await pageTitle();
+    }
+    const out: FrameRateVideo = { stream: `https://stream.mux.com/${playback}.m3u8` };
+    if (!/^FrameRate\b/i.test(full)) {
+      const name = full.replace(/\s*\|\s*FrameRate\s*$/i, '');
+      const cut = name.lastIndexOf(' — ');
+      out.title = cut > 0 ? name.slice(0, cut) : name;
+      if (cut > 0) out.uploader = name.slice(cut + 3);
+    }
+    return out;
+  } catch {
+    return null;
   } finally {
     await page.close().catch(() => {});
   }

@@ -30,7 +30,7 @@ import { parseArgs } from 'node:util';
 import { pool } from './lib/ffmpeg.ts';
 import { AGENT_MODEL, BULK_MODEL, dollars, hasCredentials, loadEnv } from './lib/claude.ts';
 import { runAgent, type AgentFindings } from './scrape/agent.ts';
-import { launchBrowser, newContext, renderPage } from './scrape/browser.ts';
+import { launchBrowser, newContext, renderPage, resolveFrameRate } from './scrape/browser.ts';
 import { fetchItem, titleFromEmbed, ytdlpVersion } from './scrape/download.ts';
 import { enrichPages, type PageVideos } from './scrape/enrich.ts';
 import { agentReasons, extractPage, wantsRender } from './scrape/extract.ts';
@@ -59,6 +59,8 @@ const HELP = `Usage: npm run scrape -- <url> [options]
   --build                then build proxies, embeddings, (with a key) visual tags and the search index,
                          adding the videos to the library
   --concurrency <n>      parallel page fetches (default 4)
+  --ignore-robots        don't let robots.txt rule out pages or media (its sitemaps
+                         and crawl-delay are still used)
 
 Claude features read ANTHROPIC_API_KEY from the environment or .env.local.
 yt-dlp (for Vimeo, YouTube and streams) and ffmpeg come from YTDLP / FFMPEG or PATH.`;
@@ -76,6 +78,7 @@ const { values: flags, positionals } = parseArgs({
     enrich: { type: 'boolean' },
     'enrich-model': { type: 'string', default: BULK_MODEL },
     'dry-run': { type: 'boolean', default: false },
+    'ignore-robots': { type: 'boolean', default: false },
     'max-size': { type: 'string', default: '500' },
     'max-duration': { type: 'string', default: '900' },
     'max-height': { type: 'string', default: '1080' },
@@ -136,7 +139,9 @@ log(`scraping ${root.origin}${dryRun ? ' (dry run)' : ''}`);
 // ---- 1. static crawl --------------------------------------------------------------
 
 const fetcher = new Fetcher(concurrency, 250);
-const robots = await loadRobots(fetcher, root);
+const siteRobots = await loadRobots(fetcher, root);
+// --ignore-robots is the operator's call; the file still lends its sitemaps and crawl-delay.
+const robots = flags['ignore-robots'] ? { ...siteRobots, allowed: () => true } : siteRobots;
 if (robots.crawlDelay) fetcher.delayMs = Math.min(robots.crawlDelay, 10) * 1000;
 if (!robots.allowed(root.toString())) {
   log(`robots.txt disallows ${root.pathname}; stopping.`);
@@ -431,6 +436,33 @@ for (const item of items) {
   if (!g.urls.length) {
     item.status = 'skipped';
     item.reason = 'disallowed by robots.txt';
+  }
+}
+// FrameRate embeds: yt-dlp doesn't know them, so open each in Chrome and
+// download the Mux stream its player loads.
+const isFrameRate = (u: { url: string }) => classifyMedia(u.url)?.provider === 'framerate';
+const frameRate = items.filter((i) => i.status === 'found' && groupOf.get(i)!.urls.every(isFrameRate));
+if (frameRate.length) {
+  const b = await launchBrowser().catch((e: Error) => (log(`  ${e.message}`), null));
+  if (b) {
+    const context = await newContext(b);
+    let resolved = 0;
+    for (const item of frameRate) {
+      const g = groupOf.get(item)!;
+      const video = await resolveFrameRate(context, g.urls[0].url);
+      if (!video) {
+        item.status = 'failed';
+        item.reason = 'FrameRate: its player loaded no stream (private, removed, or the player changed)';
+        continue;
+      }
+      g.urls.unshift({ url: video.stream, kind: 'stream' });
+      item.media.urls = [video.stream, ...item.media.urls];
+      if (video.title) item.embed = { title: video.title, ...(video.uploader ? { uploader: video.uploader } : {}), webpage_url: g.urls[1].url, extractor_key: 'FrameRate' };
+      titleFromEmbed(item);
+      resolved++;
+    }
+    await b.close();
+    log(`  framerate  ${resolved}/${frameRate.length} embeds resolved to their streams`);
   }
 }
 const todo = items.filter((i) => i.status === 'found');

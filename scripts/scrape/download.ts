@@ -353,7 +353,8 @@ function applyEmbedInfo(item: ScrapedItem, info: Record<string, unknown>): void 
     if (DROP.has(k) || k.startsWith('_') || v === null || v === undefined || v === '') continue;
     kept[k] = v;
   }
-  item.embed = kept;
+  // A stream found through a page we know (FrameRate) keeps that page's title and uploader.
+  item.embed = item.embed?.extractor_key === 'FrameRate' ? { ...kept, ...item.embed } : kept;
   titleFromEmbed(item);
 }
 
