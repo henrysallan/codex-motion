@@ -171,6 +171,12 @@ test('JSON data-sources: one video, full signed URL with its spaces', () => {
   assert.equal(candidates[0].url, 'https://player.vimeo.com/progressive_redirect/playback/1197612378/rendition/1080p/file.mp4%20%281080p%29.mp4?loc=external&signature=abc');
 });
 
+test('a file name in a player title is a label, not a relative URL', () => {
+  const setup = JSON.stringify({ autoplay: 'true', title: 'Reel-Hauptfilm-16zu9 -VA4-1080.mp4' }).replace(/"/g, '&quot;');
+  const { candidates } = extractPage(html(`<div class="videopack-wrapper" data-videopack="${setup}"><video src><source type="video/mp4" src="/wp-content/uploads/video/Reel-Hauptfilm-16zu9%20-VA4-1080.mp4?_=1"></video></div>`), PAGE, 'static');
+  assert.deepEqual(candidates.map((c) => c.url), ['https://studio.example/wp-content/uploads/video/Reel-Hauptfilm-16zu9%20-VA4-1080.mp4?_=1']);
+});
+
 test('a card thumbnail belongs to the page it links to, titled by its caption', () => {
   const card = (slug: string, name: string) =>
     `<div class="related-project"><a href="/work/${slug}"><figure class="figure-video"><video autoplay loop muted src="/media/${slug}/thumbnail.mp4"></video><figcaption><span class="figcaption-caption">${name} —</span></figcaption></figure></a></div>`;

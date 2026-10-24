@@ -30,6 +30,9 @@ const HEADINGS = 'h1,h2,h3,h4,h5,h6';
 const PLAYER_HINT = /(^|[-_\s])(video|videos|player|vimeo|youtube|plyr|vjs|video-js|jwplayer|mux|wistia|reel|showreel)($|[-_\s])/i;
 const KEEP_ATTRS = new Set(['src', 'autoplay', 'loop', 'muted', 'playsinline', 'controls', 'preload', 'poster', 'width', 'height', 'title', 'aria-label', 'alt', 'id', 'class', 'type', 'allow']);
 const MEDIA_HINT = /\.(mp4|m4v|mov|webm|m3u8|mpd)|vimeo|youtu|wistia|mux\.com|videodelivery|cloudflarestream|loom\.com|streamable|vidyard|mediadelivery|jwplayer|jwplatform/i;
+// Keys that label a video rather than locate it: players put the file's
+// name in a title ("Reel-1080.mp4"), which isn't a URL relative to the page.
+const LABEL_KEY = /^(title|name|alt|caption|label|file_?name|description)$/i;
 const MORE = /^(load|show|see|view) (more|all)\b|^more (work|projects)\b|^next page$/i;
 const SKIP_TEXT = new Set(['script', 'style', 'noscript', 'svg', 'template', 'iframe', 'video', 'audio', 'canvas']);
 const INLINE = new Set(['b', 'i', 'em', 'strong', 'u', 'sup', 'sub', 'small', 'mark', 'abbr', 'code', 'wbr']);
@@ -91,7 +94,7 @@ export function urlsInAttr(value: string): string[] {
     try {
       const out: string[] = [];
       walkJson(JSON.parse(value), (obj) => {
-        for (const v of Object.values(obj)) if (typeof v === 'string' && v.length < 2000 && MEDIA_HINT.test(v)) out.push(v);
+        for (const [k, v] of Object.entries(obj)) if (typeof v === 'string' && v.length < 2000 && !LABEL_KEY.test(k) && MEDIA_HINT.test(v)) out.push(v);
       });
       return out;
     } catch {
@@ -272,8 +275,8 @@ export function extractPage(html: string, pageUrl: string, tier: Tier, status = 
     if (type.includes('json') || /^\s*[{[]/.test(body)) {
       try {
         walkJson(JSON.parse(body), (obj) => {
-          for (const v of Object.values(obj)) {
-            if (typeof v !== 'string' || v.length > 2000 || !MEDIA_HINT.test(v)) continue;
+          for (const [k, v] of Object.entries(obj)) {
+            if (typeof v !== 'string' || v.length > 2000 || LABEL_KEY.test(k) || !MEDIA_HINT.test(v)) continue;
             found.add(v, 'inline-json', Array.isArray(obj) ? {} : { meta: { json: scalars(obj) } });
           }
         });
