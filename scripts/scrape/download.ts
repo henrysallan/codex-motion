@@ -347,7 +347,7 @@ const DROP = new Set([
   'cookies', 'filepath', 'filename', 'protocol', 'epoch',
 ]);
 
-function applyEmbedInfo(item: ScrapedItem, info: Record<string, unknown>): void {
+export function applyEmbedInfo(item: ScrapedItem, info: Record<string, unknown>): void {
   const kept: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(info)) {
     if (DROP.has(k) || k.startsWith('_') || v === null || v === undefined || v === '') continue;
