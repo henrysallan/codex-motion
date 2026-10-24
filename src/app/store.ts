@@ -896,33 +896,36 @@ export function upsertAsset(a: AssetRecord): void {
   if (a.origin === 'upload') db.put('assets', a);
 }
 
-// Drops a deleted upload from this device: off every board, out of undo
-// history (so undo can't put it back) and out of the library. Its cloud
-// rows are already gone (src/app/deleteUpload.ts).
-export function forgetAsset(id: string): void {
+// Drops deleted clips from this device: off every board, out of undo
+// history (so undo can't put them back) and out of the library. Their cloud
+// rows are already gone (src/app/deleteUpload.ts, src/app/devtools.ts).
+export function forgetAssets(ids: string[]): void {
   const s = get();
-  const gone = new Set(Object.values(s.placements).filter((p) => p.assetId === id).map((p) => p.id));
+  const doomed = new Set(ids);
+  const gone = new Set(Object.values(s.placements).filter((p) => doomed.has(p.assetId)).map((p) => p.id));
   const placements = { ...s.placements };
   for (const pid of gone) {
     delete placements[pid];
     db.remove('placements', pid);
   }
-  const uses = (p: Placement | null) => p?.assetId === id;
+  const uses = (p: Placement | null) => !!p && doomed.has(p.assetId);
   const clean = (changes: Change[]) =>
     changes
       .map((c) => ({ ...c, placements: c.placements.filter(([before, after]) => !uses(before) && !uses(after)) }))
       .filter((c) => c.placements.length || c.notes.length || c.frames?.length);
   const history = Object.fromEntries(Object.entries(s.history).map(([cid, h]) => [cid, { undo: clean(h.undo), redo: clean(h.redo) }]));
   const assets = { ...s.assets };
-  delete assets[id];
-  db.remove('assets', id);
+  for (const id of doomed) {
+    delete assets[id];
+    db.remove('assets', id);
+  }
   set({
     placements,
     assets,
     history,
     selection: s.selection.filter((x) => !gone.has(x)),
     focus: s.focus && gone.has(s.focus.placementId) ? null : s.focus,
-    feedSelection: s.feedSelection.filter((x) => x !== id),
+    feedSelection: s.feedSelection.filter((x) => !doomed.has(x)),
   });
-  for (const c of Object.values(s.collections)) if (c.coverAssetId === id) setCover(c.id, null);
+  for (const c of Object.values(s.collections)) if (c.coverAssetId && doomed.has(c.coverAssetId)) setCover(c.id, null);
 }

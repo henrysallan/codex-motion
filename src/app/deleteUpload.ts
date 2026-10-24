@@ -11,7 +11,7 @@ import { type Deletion, deleteUploadRow, unpurgedUploads } from '../data/quota.t
 import { drain } from '../data/sync.ts';
 import { deleteFiles } from '../data/upload.ts';
 import { closeDetail, useDetail } from './detail/state.ts';
-import { forgetAsset, useStore } from './store.ts';
+import { forgetAssets, useStore } from './store.ts';
 
 // Resolves null once it's deleted; otherwise with why it wasn't.
 export async function deleteUpload(a: AssetRecord): Promise<string | null> {
@@ -32,7 +32,7 @@ export async function deleteUpload(a: AssetRecord): Promise<string | null> {
     if (r.status === 'not_owner') return 'Only whoever uploaded this clip can delete it.';
     cloud = r.status;
   }
-  forgetAsset(a.id);
+  forgetAssets([a.id]);
   if (useDetail.getState().open?.assetId === a.id) closeDetail();
   await removeLocalFiles(a.id);
   if (cloud === 'ok') void deleteFiles(a.id);

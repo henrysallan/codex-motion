@@ -3,7 +3,7 @@
 // its title and owner instead, and the viewer's account once they sign in
 // to comment.
 
-import { Crosshair, LayoutGrid, LogOut, Monitor, Moon, Pause, Play, Sparkles, Sun, X } from 'lucide-react';
+import { Crosshair, LayoutGrid, LogOut, Monitor, Moon, Pause, Play, Settings, Sparkles, Sun, X } from 'lucide-react';
 import { useState } from 'react';
 import { remoteEnabled } from '../config.ts';
 import { type Quota, refreshQuota, useQuota } from '../data/quota.ts';
@@ -13,6 +13,7 @@ import { IconButton } from '../ui/controls.tsx';
 import { Menu, useMenu } from '../ui/popover.tsx';
 import { useComments } from './comments/state.ts';
 import { fileSize } from './format.ts';
+import { SettingsDialog } from './SettingsDialog.tsx';
 import {
   activateTab,
   closeTab,
@@ -199,10 +200,12 @@ const uploads = (q: Quota) => `Uploads: ${fileSize(q.used)} ${q.limit === null ?
 
 function AccountButton({ name, color, avatarUrl }: { name: string; color: string; avatarUrl: string | null }) {
   const menu = useMenu();
+  const [settings, setSettings] = useState(false);
   const sync = useSyncStatus();
   const quota = useQuota((s) => s.quota);
   const state = sync.error ? 'error' : sync.pending ? 'pending' : 'ok';
   const label = state === 'error' ? `Not saved: ${sync.error}` : state === 'pending' ? 'Saving…' : 'All changes saved';
+  const openSettings = { label: 'Settings', icon: <Settings size={14} />, onSelect: () => setSettings(true) };
   return (
     <>
       <button
@@ -230,10 +233,19 @@ function AccountButton({ name, color, avatarUrl }: { name: string; color: string
           onClose={menu.close}
           items={[
             { title: name },
-            ...(remoteEnabled ? [{ label, disabled: true }, ...(quota ? [{ label: uploads(quota), disabled: true }] : []), { label: 'Sign out', icon: <LogOut size={14} />, onSelect: () => void signOut().then(() => location.reload()) }] : [{ label: 'Local only (no account)', disabled: true }]),
+            ...(remoteEnabled
+              ? [
+                  { label, disabled: true },
+                  ...(quota ? [{ label: uploads(quota), disabled: true }] : []),
+                  'separator' as const,
+                  openSettings,
+                  { label: 'Sign out', icon: <LogOut size={14} />, onSelect: () => void signOut().then(() => location.reload()) },
+                ]
+              : [{ label: 'Local only (no account)', disabled: true }, 'separator' as const, openSettings]),
           ]}
         />
       )}
+      {settings && <SettingsDialog onClose={() => setSettings(false)} />}
     </>
   );
 }

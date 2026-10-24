@@ -4,12 +4,14 @@
 // active target, pick a collection, or drag them onto the open canvas.
 // Double-click a tile for its details (src/app/detail). The search bar at
 // the top narrows and reorders the tiles (FeedSearch.tsx, src/search).
+// With dev tools on (src/app/devtools.ts), right-clicking a selection can
+// delete it from the database.
 //
 // The library runs to thousands of clips, so only tiles near the viewport
 // are mounted, and the engine gets items for a wider band: it loads sprites
 // two viewports either side of the visible area, and needs the items to.
 
-import { Check, Crosshair, EyeOff, FolderPlus, Plus, Search, SearchX, Shuffle, Sparkles, X } from 'lucide-react';
+import { Check, Copy, Crosshair, EyeOff, FolderPlus, Plus, Search, SearchX, Shuffle, Sparkles, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AssetRecord } from '../../data/model.ts';
 import type { OverlayRect, ViewItem } from '../../engine/protocol.ts';
@@ -17,9 +19,10 @@ import { useFeedSearch, useSearch } from '../../search/client.ts';
 import { uploadDoc } from '../../search/docs.ts';
 import type { PoolItem } from '../../search/engine.ts';
 import { Button, IconButton } from '../../ui/controls.tsx';
-import { Popover } from '../../ui/popover.tsx';
+import { Menu, Popover, useMenu } from '../../ui/popover.tsx';
 import { engine } from '../engine.ts';
 import { addAssets } from '../actions.ts';
+import { removeFromLibrary, useDevToolsOn } from '../devtools.ts';
 import { type DropTarget, dropTargets } from '../events.ts';
 import { plural } from '../format.ts';
 import { justifiedRows } from '../layout/arrange.ts';
@@ -37,6 +40,7 @@ import {
 import { useResolvedTheme } from '../theme.ts';
 import { overlayColors } from '../theme.ts';
 import { openDetail } from '../detail/state.ts';
+import { toast } from '../toasts.tsx';
 import { fuzzStop, isSearching, SearchBar, SearchPanel } from './FeedSearch.tsx';
 
 const PAD = 12;
@@ -76,6 +80,9 @@ export function FeedPane() {
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const [addAnchor, setAddAnchor] = useState<HTMLElement | null>(null);
   const anchorRef = useRef<number | null>(null);
+  const devTools = useDevToolsOn();
+  const devMenu = useMenu();
+  const [devIds, setDevIds] = useState<string[]>([]);
 
   const collected = useMemo(() => collectedAssetIds(placements), [placements]);
   // Uploads only once their uploader shares them.
@@ -238,6 +245,39 @@ export function FeedPane() {
     addEventListener('pointerup', up);
   };
 
+  // Right-clicking a clip outside the selection acts on that clip alone.
+  const onTileMenu = (e: React.MouseEvent, index: number) => {
+    if (!devTools) return;
+    e.preventDefault();
+    const id = tiles[index].asset.id;
+    const ids = selected.has(id) ? selection : [id];
+    if (!selected.has(id)) {
+      select(ids);
+      anchorRef.current = index;
+    }
+    setDevIds(ids);
+    devMenu.open({ x: e.clientX, y: e.clientY });
+  };
+
+  const copyIds = (ids: string[]) =>
+    navigator.clipboard.writeText(ids.join('\n')).then(
+      () => toast(`Copied ${ids.length === 1 ? 'its ID' : `${ids.length} IDs`}`),
+      () => toast('Couldn’t copy to the clipboard'),
+    );
+
+  const removeClips = async (ids: string[]) => {
+    const one = ids.length === 1;
+    const what = one ? `“${nameOf(ids[0])}”` : plural(ids.length, 'clip');
+    if (!confirm(`Delete ${what} from the database? ${one ? 'It comes' : 'They come'} out of the Feed and off every board that has ${one ? 'it' : 'them'}, for everyone, and ${one ? 'its' : 'their'} files are deleted. This can’t be undone.`)) return;
+    try {
+      const r = await removeFromLibrary(ids);
+      const missed = ids.length - r.removed;
+      toast(`Deleted ${plural(r.removed, 'clip')}${r.boards ? ` (off ${plural(r.boards, 'board')})` : ''}${missed ? `; ${missed} ${missed === 1 ? 'wasn’t' : 'weren’t'} in the database` : ''}`);
+    } catch (e) {
+      toast(`Couldn’t delete: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
   const addSelection = (anchor: HTMLElement) => {
     if (target) {
       addAssets(target.id, selection);
@@ -312,6 +352,7 @@ export function FeedPane() {
               className={`feed-tile ${selected.has(t.asset.id) ? 'selected' : ''}`}
               style={{ left: t.x, top: t.y, width: t.w, height: t.h }}
               onPointerDown={(e) => onTileDown(e, i)}
+              onContextMenu={(e) => onTileMenu(e, i)}
               onPointerMove={(e) => engine.scrub(t.asset.id, fractionAcross(e))}
               onPointerLeave={() => engine.scrub(null)}
               onDoubleClick={() => openDetail(t.asset.id, tiles.map((x) => x.asset.id))}
@@ -327,6 +368,18 @@ export function FeedPane() {
         })}
       </ScrollSurface>
       {addAnchor && <AddToPopover anchor={addAnchor} assetIds={selection} onClose={() => setAddAnchor(null)} onAdded={() => select([])} />}
+      {devMenu.anchor && (
+        <Menu
+          anchor={devMenu.anchor}
+          onClose={devMenu.close}
+          items={[
+            { title: `Dev tools · ${plural(devIds.length, 'clip')}` },
+            { label: devIds.length === 1 ? 'Copy ID' : 'Copy IDs', icon: <Copy size={14} />, onSelect: () => void copyIds(devIds) },
+            'separator',
+            { label: 'Delete from database…', icon: <Trash2 size={14} />, danger: true, onSelect: () => void removeClips(devIds) },
+          ]}
+        />
+      )}
     </div>
   );
 }
