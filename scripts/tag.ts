@@ -1,8 +1,9 @@
 // Visual tags for the library. Each clip becomes one contact sheet (16
 // frames from its L1 proxy, in time order) and goes to a small vision model
-// with the spec's motion vocabulary. Back comes a one-line caption, tags
-// from the vocabulary only, and a few free visual tags (subjects,
-// materials, colour, style). Clips already tagged are skipped.
+// with the spec's motion vocabulary (the request is in lib/tagging.ts). Back
+// comes a one-line caption, tags from the vocabulary only, and a few free
+// visual tags (subjects, materials, colour, style). Clips already tagged are
+// skipped.
 //
 //   node scripts/tag.ts [--estimate] [--limit n] [--only <site|id>] [--force] [--model claude-haiku-5-5]
 //
@@ -16,12 +17,11 @@ import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import fs from 'node:fs';
 import path from 'node:path';
-import { z } from 'zod';
 import type { Asset, AssetAnalysis, Library } from '../src/media/library.ts';
-import { labels, slug, TAG_GROUPS, type TagGroup, VOCABULARY } from '../src/media/vocabulary.ts';
 import { addUsage, BULK_MODEL, cost, dollars, emptyUsage, hasCredentials, loadEnv, price } from './lib/claude.ts';
 import { arg, assertFfmpeg, pool } from './lib/ffmpeg.ts';
 import { contactSheet, proxyInput } from './lib/frames.ts';
+import { flattenTags, TAG_SYSTEM, tagContent, Tags } from './lib/tagging.ts';
 
 loadEnv();
 if (!hasCredentials()) {
@@ -43,44 +43,6 @@ const libraryPath = path.join(outRoot, 'library.json');
 const readLibrary = () => JSON.parse(fs.readFileSync(libraryPath, 'utf8')) as Library;
 const library = readLibrary();
 
-// Plain strings, checked against the vocabulary in code: schema enums held
-// for ~98% of clips, and the rest failed whole over one stray value.
-const group = (g: TagGroup) => z.array(z.string()).describe(`values from: ${labels(g).map(slug).join(', ')}`);
-const Tags = z.object({
-  caption: z.string().describe('one plain sentence: what is shown and how it moves'),
-  technique: group('technique'),
-  camera: group('camera'),
-  easing: group('easing'),
-  pacing: group('pacing'),
-  use: group('use'),
-  visual: z.array(z.string()).describe('up to 8 short lowercase tags for subjects, materials, colours and style'),
-});
-type TagsOut = z.infer<typeof Tags>;
-
-const SYSTEM = `You tag short clips for a motion-design reference library. Each clip arrives as one image: a contact sheet of 16 frames sampled evenly through the clip, in time order, left to right and top to bottom. Read motion from how the frames change: what moves, what the camera does, how often the picture cuts.
-
-Use only the values below, and only where the definition clearly fits what the frames show. An empty list is better than a guess.
-- technique: every technique that is clearly present.
-- camera: what the virtual or real camera does; most motion graphics are static.
-- easing and pacing: hard to judge from stills, so only when the frames make them evident.
-- use: the clip's purpose. Usually none or one, at most two. A clip that happens to show a logo or some type is not a logo reveal or a title sequence.
-
-${TAG_GROUPS.map((g) => `${g}:\n${labels(g).map((l) => `  ${slug(l)}: ${(VOCABULARY[g] as Record<string, string>)[l]}`).join('\n')}`).join('\n')}
-
-The caption is one plain sentence about what is shown and how it moves, without praise. Visual tags are up to 8 short lowercase words or phrases for subjects, materials, colours and style, such as "chrome", "typography", "isometric", "pastel".`;
-
-// What the site said about the clip, as a hint; the frames decide.
-function describe(a: Asset): string {
-  const s = a.source;
-  const lines = [`Title: ${a.name}`, `Duration: ${a.duration.toFixed(1)} s, ${a.width}x${a.height}`];
-  if (s) {
-    lines.push(`From: ${s.siteName ?? s.site}${s.client ? `, for ${s.client}` : ''}${s.year ? `, ${s.year}` : ''}`);
-    if (s.description) lines.push(`Project: ${s.description.slice(0, 400)}`);
-    if (s.tags?.length) lines.push(`Site tags: ${s.tags.join(', ')}`);
-  }
-  return lines.join('\n');
-}
-
 const client = new Anthropic({ maxRetries: 4 });
 const thinking = model.startsWith('claude-haiku') ? ({ type: 'disabled' } as const) : undefined;
 const sheetDir = path.resolve('media/.sheets');
@@ -91,33 +53,7 @@ async function request(a: Asset): Promise<{ system: string; content: Anthropic.C
   await contactSheet(proxyInput(a.l1.url), sheet, a);
   const data = fs.readFileSync(sheet).toString('base64');
   fs.rmSync(sheet, { force: true });
-  return {
-    system: SYSTEM,
-    content: [
-      { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } },
-      { type: 'text', text: describe(a) },
-    ],
-  };
-}
-
-const groupOf = new Map(TAG_GROUPS.flatMap((g) => labels(g).map((l) => [slug(l), g] as const)));
-
-// Vocabulary values land in their own group whichever list the model put
-// them in; anything else is set aside (kept in tags.json as offVocabulary,
-// a hint for growing the vocabulary).
-function flatten(t: TagsOut): { tags: string[]; offVocabulary: string[] } {
-  const tags = new Set<string>();
-  const off: string[] = [];
-  for (const g of TAG_GROUPS) {
-    for (const raw of t[g]) {
-      const v = slug(raw);
-      const home = groupOf.get(v);
-      if (home) tags.add(`${home}:${v}`);
-      else if (v) off.push(`${g}:${v}`);
-    }
-  }
-  const visual = [...new Set(t.visual.map((v) => slug(v)).filter((v) => v && !groupOf.has(v)))].slice(0, 8);
-  return { tags: [...[...tags].sort((a, b) => TAG_GROUPS.indexOf(a.split(':')[0] as TagGroup) - TAG_GROUPS.indexOf(b.split(':')[0] as TagGroup)), ...visual.map((v) => `visual:${v}`)], offVocabulary: off };
+  return { system: TAG_SYSTEM, content: tagContent(data, a) };
 }
 
 const matches = (a: Asset) => !only || a.id.startsWith(only) || a.source?.site === only;
@@ -180,7 +116,7 @@ await pool(todo, 6, async (a) => {
     if (response.stop_reason === 'refusal') throw new Error('declined');
     const out = response.parsed_output;
     if (!out) throw new Error(`no structured output (${response.stop_reason})`);
-    const { tags, offVocabulary } = flatten(out);
+    const { tags, offVocabulary } = flattenTags(out);
     const analysis: AssetAnalysis = { caption: out.caption.trim(), tags, model, at: new Date().toISOString() };
     const dir = path.join(outRoot, a.id);
     fs.writeFileSync(path.join(dir, 'tags.json'), JSON.stringify({ ...out, offVocabulary, model, at: analysis.at, usage: response.usage }, null, 2));

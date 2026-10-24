@@ -7,6 +7,12 @@
     "api/embed.ts": {
       "maxDuration": 60,
       "excludeFiles": "node_modules/{onnxruntime-node/bin/napi-v6/{darwin,win32,linux/arm64},onnxruntime-web,@img/sharp-{darwin,win32}*}/**"
+    },
+    "api/enrich.ts": {
+      "maxDuration": 60
+    },
+    "api/unfurl.ts": {
+      "maxDuration": 30
     }
   },
   "rewrites": [{ "source": "/((?!assets/|api/).*)", "destination": "/index.html" }],
@@ -14,6 +20,18 @@
     {
       "source": "/assets/(.*)",
       "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
+    },
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self' 'sha256-S1qZi7MhCy0AOh9SdKwwhyst2l0g4VmlkecOxyk4iRg='; style-src 'self'; img-src 'self' blob: data: https://motion-media.isthishenry.com https://*.googleusercontent.com; media-src 'self' blob: data: https://motion-media.isthishenry.com; connect-src 'self' blob: https://nmmddnszqlrplwvcqgdn.supabase.co wss://nmmddnszqlrplwvcqgdn.supabase.co https://motion-media.isthishenry.com; worker-src 'self' blob:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+        },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "X-Frame-Options", "value": "DENY" }
+      ]
     }
   ]
 }

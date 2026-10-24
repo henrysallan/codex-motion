@@ -387,3 +387,181 @@ button.info-chip:hover {
     opacity: 0.45;
   }
 }
+
+/* The panel's Info / Comments pill. */
+.info-tabs {
+  display: flex;
+  flex: none;
+  justify-content: center;
+  padding: 10px 12px 0;
+}
+
+.info-tabs + .info-head {
+  padding-top: 10px;
+}
+
+.info-tab-count {
+  margin-left: 4px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Comments on the clip, each at a moment in it. */
+.clip-comments {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.clip-comment-list {
+  flex: 1;
+  min-height: 0;
+  padding: 8px 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.clip-comment {
+  display: flex;
+  gap: 8px;
+  padding: 7px 14px;
+}
+
+.clip-comment:hover {
+  background: var(--surface-hover);
+}
+
+.clip-comment.selected {
+  background: var(--accent-soft);
+}
+
+.clip-comment .comment-avatar {
+  width: 20px;
+  height: 20px;
+  font-size: 9.5px;
+}
+
+.clip-comment:hover .comment-delete {
+  opacity: 1;
+}
+
+.clip-stamp {
+  display: inline-flex;
+  align-items: center;
+  height: 17px;
+  margin-right: 6px;
+  padding: 0 5px;
+  border-radius: var(--radius-xs);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+
+button.clip-stamp:hover,
+.clip-comment.selected .clip-stamp {
+  background: var(--accent);
+  color: #fff;
+}
+
+.clip-comment-empty {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 40px 24px;
+  color: var(--text-3);
+  text-align: center;
+}
+
+.clip-comment-empty strong {
+  margin-top: 4px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.clip-comment-empty p {
+  margin: 0;
+  font-size: 11px;
+}
+
+.clip-comment-skeleton {
+  padding: 8px 14px;
+}
+
+/* The box at the bottom: write, and it's left at the playhead's moment. */
+.clip-composer {
+  flex: none;
+  margin: 0 8px 8px;
+  padding: 7px 7px 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.clip-composer:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.clip-composer textarea {
+  display: block;
+  width: 100%;
+  height: 20px;
+  padding: 2px 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  resize: none;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.clip-composer textarea::placeholder {
+  color: var(--text-3);
+}
+
+.clip-composer-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+}
+
+.clip-composer-foot .clip-stamp {
+  margin: 0;
+}
+
+.clip-composer.signed-out {
+  display: flex;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+}
+
+/* Comment markers on a player's timeline, over the track. */
+.timeline-marker {
+  position: absolute;
+  top: 9px;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 1.5px var(--surface);
+  cursor: pointer;
+  transition: transform 0.1s ease-out;
+}
+
+.timeline-marker:hover,
+.timeline-marker.selected {
+  transform: scale(1.35);
+}

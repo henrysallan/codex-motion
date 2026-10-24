@@ -26,6 +26,7 @@ import type {
   OverlayRect,
   RGBA,
   ToWorker,
+  ViewBackdrop,
   ViewItem,
   ViewKind,
   ViewStyle,
@@ -75,6 +76,7 @@ const TIER_COLORS: RGBA[] = [
 ];
 
 const FULL_FRAME: [number, number, number, number] = [0, 0, 1, 1];
+const NO_CLIP: [number, number, number, number] = [-1, -1, -1, -1];
 
 type Init = Extract<ToWorker, { type: 'init' }>;
 type Post = (msg: FromWorker) => void;
@@ -92,6 +94,8 @@ interface View {
   camera: CameraState;
   items: Item[];
   byId: Map<number, Item>;
+  // By z, back to front.
+  backdrops: Backdrop[];
   overlay: OverlayRect[];
   // Pan velocity in device px/s, for leading the prefetch margin.
   velocity: { x: number; y: number };
@@ -112,12 +116,19 @@ interface Layer {
   createdAt: number;
 }
 
+interface Backdrop {
+  data: ViewBackdrop;
+  depth: number;
+}
+
 interface Item {
   view: View;
   data: ViewItem;
   asset: Asset;
   slot: Slot;
   depth: number;
+  // The item's clip rect on screen (device px), from layout; null: none.
+  clip: [number, number, number, number] | null;
   // Source range in µs; the loop is rangeOut - rangeIn.
   rangeIn: number;
   rangeOut: number;
@@ -179,6 +190,8 @@ export class Engine {
   private focus: FocusState | null = null;
   // Focus clock, virtual µs on the focused item's loop.
   private focusTimeUs = 0;
+  // Tier the focused item showed in the last frame.
+  private focusShown: Tier = 0;
 
   private readonly streams = new Map<string, StreamEntry>();
   // Lowest tier that failed to decode, per asset.
@@ -187,6 +200,7 @@ export class Engine {
   private readonly assignment = new Map<Slot, Tier>();
   private tileData = new Float32Array(TILE_FLOATS * 256);
   private overlayData = new Float32Array(OVERLAY_FLOATS * 64);
+  private backdropData = new Float32Array(OVERLAY_FLOATS * 16);
   private readonly videos: VideoDraw[] = [];
 
   private budget: number;
@@ -248,6 +262,14 @@ export class Engine {
         if (v) this.setItems(v, msg.items);
         break;
       }
+      case 'view:backdrops': {
+        const v = this.views.get(msg.id);
+        if (v) {
+          v.backdrops = [...msg.backdrops].sort((a, b) => a.z - b.z).map((data) => ({ data, depth: 0 }));
+          this.rankDepths(v);
+        }
+        break;
+      }
       case 'view:camera': {
         const v = this.views.get(msg.id);
         if (v) this.setCamera(v, msg.camera);
@@ -307,6 +329,7 @@ export class Engine {
       camera: { x: 0, y: 0, zoom: 1 },
       items: [],
       byId: new Map(),
+      backdrops: [],
       overlay: [],
       velocity: { x: 0, y: 0 },
       lastCameraAt: 0,
@@ -344,32 +367,27 @@ export class Engine {
   }
 
   private setItems(view: View, items: ViewItem[]): void {
-    const order = [...items].sort((a, b) => a.z - b.z);
-    const rank = new Map(order.map((p, i) => [p.id, i]));
-    const n = Math.max(1, items.length - 1);
     const next: Item[] = [];
     const byId = new Map<number, Item>();
     for (const data of items) {
       const asset = this.assets.get(data.assetId);
       if (!asset) continue;
-      // Higher z, smaller depth: nearer.
-      const depth = 0.9 - (0.8 * rank.get(data.id)!) / n;
       let it = view.byId.get(data.id);
       if (it) {
         it.data = data;
         it.asset = asset;
-        it.depth = depth;
       } else {
         it = {
           view,
           data,
           asset,
-          depth,
+          depth: 0,
+          clip: null,
           slot: {
             x: 0, y: 0, w: 0, h: 0,
             visible: false, nearby: false, visibleArea: 0,
             keys: [null, null, null],
-            current: 0, blocked: null, focused: false, needsVideo: false, fastScroll: false,
+            current: 0, blocked: null, focused: false, needsVideo: false, fastScroll: false, dimmed: false,
           },
           rangeIn: 0,
           rangeOut: 0,
@@ -383,6 +401,16 @@ export class Engine {
     }
     view.items = next;
     view.byId = byId;
+    this.rankDepths(view);
+  }
+
+  // Depths from z across a view's items and backdrops together: higher z,
+  // smaller depth (nearer).
+  private rankDepths(view: View): void {
+    const order: (Item | Backdrop)[] = [...view.items, ...view.backdrops];
+    order.sort((a, b) => a.data.z - b.data.z);
+    const n = Math.max(1, order.length - 1);
+    for (let i = 0; i < order.length; i++) order[i].depth = 0.9 - (0.8 * i) / n;
   }
 
   // Recomputes an item's range and stream keys after its data, asset or
@@ -590,7 +618,7 @@ export class Engine {
       if (it) {
         const loop = it.rangeOut - it.rangeIn;
         const local = ((this.focusTimeUs % loop) + loop) % loop;
-        this.post({ type: 'focusTime', time: (it.rangeIn + local) / 1e6, inPoint: it.rangeIn / 1e6, outPoint: it.rangeOut / 1e6 });
+        this.post({ type: 'focusTime', time: (it.rangeIn + local) / 1e6, inPoint: it.rangeIn / 1e6, outPoint: it.rangeOut / 1e6, tier: this.focusShown, target: it.assigned });
       }
     }
   }
@@ -620,13 +648,32 @@ export class Engine {
       s.y = (p.y - camY) * scale;
       s.w = p.w * scale;
       s.h = p.h * scale;
-      s.visible = s.x < W && s.x + s.w > 0 && s.y < H && s.y + s.h > 0;
-      s.nearby = !s.visible && s.x < W + right && s.x + s.w > -left && s.y < H + bottom && s.y + s.h > -top;
-      s.visibleArea = s.visible ? (Math.min(s.x + s.w, W) - Math.max(s.x, 0)) * (Math.min(s.y + s.h, H) - Math.max(s.y, 0)) : 0;
+      // What can show: the item's rect, cut down to its clip.
+      let x0 = s.x;
+      let y0 = s.y;
+      let x1 = s.x + s.w;
+      let y1 = s.y + s.h;
+      const c = p.clip;
+      if (c) {
+        const cx = (c.x - camX) * scale;
+        const cy = (c.y - camY) * scale;
+        const cw = c.w * scale;
+        const ch = c.h * scale;
+        it.clip = [cx, cy, cw, ch];
+        x0 = Math.max(x0, cx);
+        y0 = Math.max(y0, cy);
+        x1 = Math.min(x1, cx + cw);
+        y1 = Math.min(y1, cy + ch);
+      } else it.clip = null;
+      const some = x1 > x0 && y1 > y0;
+      s.visible = some && x0 < W && x1 > 0 && y0 < H && y1 > 0;
+      s.nearby = some && !s.visible && x0 < W + right && x1 > -left && y0 < H + bottom && y1 > -top;
+      s.visibleArea = s.visible ? (Math.min(x1, W) - Math.max(x0, 0)) * (Math.min(y1, H) - Math.max(y0, 0)) : 0;
       s.current = it.assigned;
       s.blocked = this.blocked.get(it.asset.id) ?? null;
       s.needsVideo = !it.asset.l0 || this.sprites.failed.has(it.asset.id);
       s.fastScroll = v.fastScroll;
+      s.dimmed = !!this.focus && this.focus.viewId === v.id && !s.focused;
       slots.push(s);
     }
   }
@@ -647,8 +694,10 @@ export class Engine {
           let e = this.streams.get(key);
           if (!e || !e.stream.decoding) {
             const file = tier === 3 ? it.asset.original! : tier === 2 ? it.asset.l2! : it.asset.l1;
+            const stream = new VideoStream(key, file.url, file.bytes || undefined, it.rangeIn, it.rangeOut, this.cache, this.warmup, now);
+            stream.focus = it.slot.focused;
             e = {
-              stream: new VideoStream(key, file.url, file.bytes || undefined, it.rangeIn, it.rangeOut, this.cache, this.warmup, now),
+              stream,
               assetId: it.asset.id,
               tier,
               loopUs: it.rangeOut - it.rangeIn,
@@ -761,7 +810,8 @@ export class Engine {
       }
       td[o + 9] = it.depth;
       td[o + 10] = it.data.dim ?? 1;
-      td[o + 11] = 0;
+      td[o + 11] = (it.data.clip?.radius ?? 0) * v.dpr;
+      td.set(it.clip ?? NO_CLIP, o + 12);
       n++;
     }
 
@@ -786,13 +836,21 @@ export class Engine {
           if (!e.stream.onTime()) lateDraws++;
         }
         const s = it.slot;
-        videos.push({ frame, x: s.x, y: s.y, w: s.w, h: s.h, alpha: l.alpha, depth: it.depth, dim: it.data.dim ?? 1, crop: it.data.crop ?? FULL_FRAME });
+        videos.push({
+          frame, x: s.x, y: s.y, w: s.w, h: s.h, alpha: l.alpha, depth: it.depth, dim: it.data.dim ?? 1, crop: it.data.crop ?? FULL_FRAME,
+          clip: it.clip ?? NO_CLIP, clipRadius: (it.data.clip?.radius ?? 0) * v.dpr,
+        });
         if (l.alpha >= 0.5) shown.set(it, Math.max(shown.get(it) ?? 0, l.tier) as Tier);
       }
     }
     for (const it of items) if (it.slot.visible) tiers[Math.min(2, shown.get(it) ?? 0)]++;
+    if (this.focus?.viewId === v.id) {
+      const focused = v.byId.get(this.focus.itemId);
+      this.focusShown = (focused && shown.get(focused)) || 0;
+    }
 
     const overlayCount = this.buildOverlay(v, shown);
+    const backdropCount = this.buildBackdrops(v);
     const scale = v.camera.zoom * v.dpr;
     this.renderer.render(
       v.target,
@@ -815,6 +873,8 @@ export class Engine {
       videos,
       this.overlayData,
       overlayCount,
+      this.backdropData,
+      backdropCount,
     );
     return { videos: videoDraws, late: lateDraws, missing };
   }
@@ -838,6 +898,7 @@ export class Engine {
       od.set(stroke, o + 8);
       od[o + 12] = sw;
       od[o + 13] = r;
+      od[o + 14] = 0;
     };
     if (tierRects) {
       const none: RGBA = [0, 0, 0, 0];
@@ -858,15 +919,43 @@ export class Engine {
     return n;
   }
 
+  // Converts the view's on-screen backdrops to device px, back to front, each
+  // at its depth. Returns the count.
+  private buildBackdrops(v: View): number {
+    if (this.backdropData.length < v.backdrops.length * OVERLAY_FLOATS) this.backdropData = new Float32Array(v.backdrops.length * OVERLAY_FLOATS * 2);
+    const bd = this.backdropData;
+    const scale = v.camera.zoom * v.dpr;
+    let n = 0;
+    for (const { data: b, depth } of v.backdrops) {
+      const x = (b.x - v.camera.x) * scale;
+      const y = (b.y - v.camera.y) * scale;
+      const w = b.w * scale;
+      const h = b.h * scale;
+      const pad = b.strokeWidth * v.dpr;
+      if (x - pad >= v.width || y - pad >= v.height || x + w + pad <= 0 || y + h + pad <= 0) continue;
+      const o = n++ * OVERLAY_FLOATS;
+      bd[o] = x;
+      bd[o + 1] = y;
+      bd[o + 2] = w;
+      bd[o + 3] = h;
+      bd.set(b.fill, o + 4);
+      bd.set(b.stroke, o + 8);
+      bd[o + 12] = b.strokeWidth * v.dpr;
+      bd[o + 13] = b.radius * v.dpr;
+      bd[o + 14] = depth;
+    }
+    return n;
+  }
+
   // ---- budget & stats ------------------------------------------------------
 
   private adaptBudget(now: number): void {
     if (now - this.budgetCheckAt < BUDGET_CHECK_MS) return;
     this.budgetCheckAt = now;
     const max = this.settings.decoderBudget;
-    // Decoders that have been fed but have produced nothing (still
-    // downloading doesn't count: that's the network, not the decoder).
-    const stuck = [...this.streams.values()].filter((e) => e.stream.state === 'ready' && e.stream.readyAt > 0 && !e.stream.started && now - e.stream.readyAt > STUCK_MS);
+    // Decoders that have had packets but have produced nothing (waiting on
+    // downloads doesn't count: that's the network, not the decoder).
+    const stuck = [...this.streams.values()].filter((e) => e.stream.stalledFor(now) > STUCK_MS);
     if (this.lateRatio() > LATE_LIMIT || stuck.length > 0) {
       this.budget = Math.min(max, Math.max(BUDGET_MIN, Math.floor(this.budget * 0.75)));
       this.cleanSince = now;

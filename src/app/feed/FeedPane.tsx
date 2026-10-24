@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AssetRecord } from '../../data/model.ts';
 import type { OverlayRect, ViewItem } from '../../engine/protocol.ts';
 import { useFeedSearch, useSearch } from '../../search/client.ts';
+import { uploadDoc } from '../../search/docs.ts';
 import type { PoolItem } from '../../search/engine.ts';
 import { Button, IconButton } from '../../ui/controls.tsx';
 import { Popover } from '../../ui/popover.tsx';
@@ -77,14 +78,21 @@ export function FeedPane() {
   const anchorRef = useRef<number | null>(null);
 
   const collected = useMemo(() => collectedAssetIds(placements), [placements]);
-  const order = useMemo(() => shuffled(Object.values(assets).filter((a) => (a.origin === 'library' || a.origin === 'scraper') && a.status === 'ready'), seed), [assets, seed]);
+  // Uploads only once their uploader shares them.
+  const order = useMemo(() => shuffled(Object.values(assets).filter((a) => a.status === 'ready' && (a.origin !== 'upload' || a.inFeed)), seed), [assets, seed]);
 
   // Search runs in a worker over the shuffled pool. With no search (and the
   // default order) the Feed doesn't wait for it.
   const query = useStore((s) => s.feedQuery);
   const searchOpen = useStore((s) => s.feedSearchOpen);
   const pool = useMemo<PoolItem[]>(
-    () => order.map((a) => ({ id: a.id, name: a.sourceTitle ?? a.name, width: a.width, height: a.height, duration: a.duration, added: Math.round(a.addedAt / 1000) })),
+    () =>
+      order.map((a) => {
+        const added = Math.round(a.addedAt / 1000);
+        const name = a.sourceTitle ?? a.name;
+        // The index bundle covers the library; shared uploads bring their own doc.
+        return { id: a.id, name, width: a.width, height: a.height, duration: a.duration, added, ...(a.origin === 'upload' ? { extra: uploadDoc(a, added, a.name) } : {}) };
+      }),
     [order],
   );
   const exclude = useMemo(() => (hideAdded ? [...collected] : null), [hideAdded, collected]);

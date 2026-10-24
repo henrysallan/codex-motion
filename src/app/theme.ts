@@ -2,6 +2,7 @@
 // and gives the GPU views matching colours (they can't read CSS).
 
 import { useEffect, useSyncExternalStore } from 'react';
+import type { FrameColor } from '../data/model.ts';
 import type { RGB, ViewStyle } from '../engine/protocol.ts';
 import { useStore } from './store.ts';
 
@@ -57,4 +58,41 @@ export function viewStyle(theme: Resolved, surface: Surface, radius?: number): V
 export const overlayColors = {
   light: { accent: [0.231, 0.482, 0.965] as RGB, handle: [1, 1, 1] as RGB },
   dark: { accent: [0.357, 0.573, 1] as RGB, handle: [0.094, 0.094, 0.102] as RGB },
+};
+
+// Board frame fills, soft tints of the board in each theme. The CSS hex is
+// for swatches; the GPU gets the same colour.
+export const frameColors: Record<Resolved, Record<FrameColor, string>> = {
+  light: {
+    default: '#ffffff',
+    grey: '#ebe9e6',
+    red: '#fbe2df',
+    orange: '#fcead8',
+    yellow: '#faf2cf',
+    green: '#e1f1e2',
+    blue: '#e0eafb',
+    purple: '#ebe4fa',
+    pink: '#fae2ee',
+  },
+  dark: {
+    default: '#1f1f22',
+    grey: '#2a2a2e',
+    red: '#3b2224',
+    orange: '#3a2b1e',
+    yellow: '#36311c',
+    green: '#1f3124',
+    blue: '#1e2739',
+    purple: '#2b2339',
+    pink: '#3a2130',
+  },
+};
+
+export function frameFill(theme: Resolved, color: FrameColor): RGB {
+  return hex(frameColors[theme][color] ?? frameColors[theme].default);
+}
+
+// A frame's hairline edge, so a white frame still shows on a pale board.
+export const frameStroke: Record<Resolved, [number, number, number, number]> = {
+  light: [0, 0, 0, 0.09],
+  dark: [1, 1, 1, 0.07],
 };

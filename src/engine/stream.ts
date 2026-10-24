@@ -53,7 +53,8 @@ export type StreamState = 'loading' | 'ready' | 'failed' | 'closed';
 // dozen streams start together, each gets a sliver of it and they all show
 // late, 0.1-0.2 s after starting. Taking turns, a stream warms up in a few
 // ms: the first shows almost at once and the rest follow one by one, sooner
-// on the whole. Streams on screen go before prefetches. A stream only asks
+// on the whole. Streams on screen go before prefetches, and a focused clip's
+// stream doesn't wait at all: it's the one being watched. A stream only asks
 // for a turn once its first packets have loaded.
 export class Warmup {
   private readonly turns: number;
@@ -69,7 +70,7 @@ export class Warmup {
   enter(s: VideoStream): boolean {
     const i = this.waiting.indexOf(s);
     const yields = !s.onScreen && this.waiting.some((w) => w.onScreen);
-    if (this.active < this.turns && !yields) {
+    if (s.focus || (this.active < this.turns && !yields)) {
       if (i >= 0) this.waiting.splice(i, 1);
       this.active++;
       return true;
@@ -102,6 +103,8 @@ export class VideoStream {
   // and whether one on screen does.
   used = true;
   onScreen = false;
+  // Set by the engine when it opens the stream: it plays a focused clip.
+  focus = false;
 
   private media: Media | null = null;
   private unsubscribe: (() => void) | null = null;
@@ -128,6 +131,8 @@ export class VideoStream {
   private readonly preroll = new Set<number>();
   // Whether a frame has been presented since the stream opened.
   private shown = false;
+  // Last time feeding stopped at a packet that wasn't in yet.
+  private starvedAt = 0;
 
   // `rangeOut` may exceed the media; it is clamped once the packets are
   // known. `size` is the file's, if known.
@@ -151,6 +156,16 @@ export class VideoStream {
 
   get decoding(): boolean {
     return this.state === 'loading' || this.state === 'ready';
+  }
+
+  // How long (ms) the decoder has had packets to work on without the stream
+  // showing a frame: since its first feed, or since it last waited for
+  // packets, whichever is later. Waiting on the network isn't the decoder's
+  // doing, so it doesn't count.
+  stalledFor(now: number): number {
+    if (this.state !== 'ready' || this.shown || !this.readyAt) return 0;
+    if (!this.media?.packets[this.feedIndex].data) return 0;
+    return now - Math.max(this.readyAt, this.starvedAt);
   }
 
   // Advances the playhead (virtual µs) and tops up the decoder.
@@ -280,6 +295,7 @@ export class VideoStream {
       const p = packets[this.feedIndex];
       if (!p.data) {
         // Not in yet: ask now rather than next frame. onLoad feeds on.
+        this.starvedAt = performance.now();
         this.prefetch();
         break;
       }
@@ -307,7 +323,10 @@ export class VideoStream {
   // the range ends sooner, topped up to the lead when a request has to go
   // out anyway. While the feed packet itself isn't in (just opened, or after
   // a seek) it asks for the minimum only, which reaches past the playhead
-  // (keyframes are at most a second apart) and arrives sooner.
+  // (keyframes are at most a second apart) and arrives sooner. A focused
+  // stream asks for the lead too, in a second request beside it: its clock
+  // keeps playing while it waits, and at a second of video per round trip a
+  // slow link never catches the playhead.
   private prefetch(): void {
     const media = this.media;
     if (this.state !== 'ready' || !media || media.complete) return;
@@ -322,6 +341,9 @@ export class VideoStream {
       const to = Math.min(this.endIndex, media.indexAt(from + PREFETCH_MIN_US - covered));
       const extend = Math.min(this.endIndex, media.indexAt(from + max - covered));
       media.load(index, Math.max(to, index + 1), extend);
+      if (this.focus && pass === 0 && !packets[this.feedIndex].data && to < this.endIndex) {
+        media.load(to, Math.min(this.endIndex, media.indexAt(from + PREFETCH_LEAD_US)));
+      }
       covered += this.rangeOut - Math.max(from, this.rangeIn);
       index = this.keyframeBefore(this.rangeIn);
     }

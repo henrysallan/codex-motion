@@ -18,7 +18,7 @@
 //
 // Text matches rank first by default; strong visual matches interleave.
 
-import type { PackedVectors, SearchBundle } from './bundle.ts';
+import type { PackedVectors, SearchBundle, SearchDoc, SearchPage } from './bundle.ts';
 import { aspectOf, colorsOf, durationOf, FACETS, type FacetKey, facetByAlias, fixedOrder, valueLabel } from './taxonomy.ts';
 
 const FACET_KEYS = FACETS.map((f) => f.key);
@@ -38,7 +38,8 @@ export interface SearchQuery {
 export const emptyQuery = (): SearchQuery => ({ text: '', filters: {}, similar: [], fuzziness: 0.5, sort: 'relevance' });
 
 // A clip in the Feed, in its shuffled order. Clips missing from the bundle
-// (new uploads, a stale index) are searchable by name and format.
+// (a stale index) are searchable by name and format, and by `extra` when
+// the app built their doc itself (uploads shared to the Feed).
 export interface PoolItem {
   id: string;
   name: string;
@@ -46,6 +47,17 @@ export interface PoolItem {
   height: number;
   duration: number;
   added: number;
+  extra?: PoolDoc;
+}
+
+// A doc built in the app with src/search/docs.ts; `doc.page` is ignored in
+// favour of `page`. `rev` changes whenever the doc does, so a pool with the
+// same clips still rebuilds.
+export interface PoolDoc {
+  rev: string;
+  doc: SearchDoc;
+  page: SearchPage | null;
+  siteName: string;
 }
 
 export interface Suggestion {
@@ -181,6 +193,19 @@ function tagText(tag: string): string {
   return t;
 }
 
+// A page's tokens for the fields it fills: who, meta and description.
+interface PageTokens {
+  who: string[];
+  meta: string[];
+  description: string[];
+}
+
+const pageTokensOf = (p: SearchPage, siteName: string): PageTokens => ({
+  who: tokens([p.client ?? '', ...p.studios].join(' . ')),
+  meta: tokens([...p.projectTypes, ...p.sectors, ...p.tags, siteName, p.site].join(' . ')),
+  description: tokens(p.description ?? ''),
+});
+
 const colorCache = new Map<string, string[]>();
 const colorsOfTag = (tag: string) => {
   let c = colorCache.get(tag);
@@ -229,7 +254,9 @@ export class SearchIndex {
   // Sorted, for prefix lookups and typo scans.
   private terms: string[] = [];
   private columns: FacetColumn[] = [];
-  private pageCache = new Map<number, { who: string[]; meta: string[]; description: string[] }>();
+  private pageCache = new Map<number, PageTokens>();
+  // Pool docs built by the app, by id: their rev.
+  private revs = new Map<string, string>();
   private semCache: { key: string; z: Float32Array } | null = null;
   private prfCache: { key: string; z: Float32Array } | null = null;
   private simCache: { key: string; z: Float32Array } | null = null;
@@ -253,20 +280,17 @@ export class SearchIndex {
     let t = this.pageCache.get(i);
     if (!t) {
       const p = this.bundle.pages[i];
-      t = {
-        who: tokens([p.client ?? '', ...p.studios].join(' . ')),
-        meta: tokens([...p.projectTypes, ...p.sectors, ...p.tags, this.bundle.sites[p.site] ?? '', p.site].join(' . ')),
-        description: tokens(p.description ?? ''),
-      };
+      t = pageTokensOf(p, this.bundle.sites[p.site] ?? '');
       this.pageCache.set(i, t);
     }
     return t;
   }
 
   // The Feed's clips in display (shuffled) order. The same clips in a new
-  // order (a reshuffle) only reorder; a changed set rebuilds the index.
+  // order (a reshuffle) only reorder; a changed set, or a changed doc from
+  // the app, rebuilds the index.
   setPool(pool: PoolItem[]): void {
-    const same = pool.length === this.docs.length && pool.every((p) => this.docIndex.has(p.id));
+    const same = pool.length === this.docs.length && pool.every((p) => this.docIndex.has(p.id) && this.revs.get(p.id) === p.extra?.rev);
     if (!same) this.build(pool);
     this.pos = new Int32Array(this.docs.length);
     pool.forEach((p, i) => (this.pos[this.docIndex.get(p.id)!] = i));
@@ -275,10 +299,13 @@ export class SearchIndex {
   private build(pool: PoolItem[]): void {
     const fieldTokens: string[][][] = [];
     const facetValues: string[][][] = FACET_KEYS.map(() => []);
+    this.revs = new Map(pool.filter((p) => p.extra).map((p) => [p.id, p.extra!.rev]));
     this.docs = pool.map((item) => {
       const row = this.bundleRow.get(item.id);
-      const d = row === undefined ? null : this.bundle.docs[row];
-      const page = d && d.page >= 0 ? this.bundle.pages[d.page] : null;
+      // The bundle wins; the app's own doc covers what it doesn't.
+      const own = row === undefined ? item.extra : undefined;
+      const d = row !== undefined ? this.bundle.docs[row] : (own?.doc ?? null);
+      const page = own ? own.page : d && d.page >= 0 ? this.bundle.pages[d.page] : null;
       const tags = d?.tags ?? [];
       const f: Partial<Record<FacetKey, string[]>> = {
         aspect: [aspectOf(d?.width ?? item.width, d?.height ?? item.height)],
@@ -287,7 +314,7 @@ export class SearchIndex {
       if (page) {
         f.studio = page.studios;
         if (page.client) f.client = [page.client];
-        f.site = [this.bundle.sites[page.site] ?? page.site];
+        f.site = [this.bundle.sites[page.site] ?? own?.siteName ?? page.site];
         f.projectType = page.projectTypes;
         f.sector = page.sectors;
         if (page.year) f.year = [String(page.year)];
@@ -303,7 +330,7 @@ export class SearchIndex {
       FACET_KEYS.forEach((k, fi) => facetValues[fi].push(f[k] ?? []));
 
       // Page fields repeat for every clip on the page: tokenise them once.
-      const pageToks = page ? this.pageTokens(d!.page) : null;
+      const pageToks = !page ? null : own ? pageTokensOf(page, own.siteName) : this.pageTokens(d!.page);
       const toks = [
         tokens(`${d?.title ?? item.name} . ${page?.title ?? ''}`),
         pageToks?.who ?? [],

@@ -12,6 +12,10 @@ export const config = {
   // Embeds search text with the library's image model (api/embed.ts; the
   // dev server serves it too). Empty turns visual text search off.
   embedUrl: (env.VITE_EMBED_URL as string | undefined) ?? '/api/embed',
+  // Reads an upload's source page and tags its frames (api/enrich.ts).
+  enrichUrl: (env.VITE_ENRICH_URL as string | undefined) ?? '/api/enrich',
+  // Previews the links in a clip's notes (api/unfurl.ts).
+  unfurlUrl: (env.VITE_UNFURL_URL as string | undefined) ?? '/api/unfurl',
 };
 
 export const remoteEnabled = !!(config.supabaseUrl && config.supabaseAnonKey);

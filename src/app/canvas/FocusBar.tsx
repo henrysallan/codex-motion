@@ -1,12 +1,15 @@
 // Focus mode controls: play/pause, frame step, speed, a timeline with
-// in/out points, the quality being shown and the info panel toggle. The
-// playhead updates every frame from the engine, so it's moved through refs,
-// not React state.
+// in/out points and comment markers, the quality being shown and the info
+// panel toggle. The playhead and quality update every frame from the
+// engine, so they're set through refs, not React state.
 
 import { ChevronLeft, ChevronRight, Pause, Play, X } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
+import type { AssetRecord } from '../../data/model.ts';
 import { IconButton, Segmented } from '../../ui/controls.tsx';
 import { engine } from '../engine.ts';
+import { CommentMarkers } from '../detail/ClipComments.tsx';
+import { focusPlayhead, useWatchClipComments } from '../detail/comments.ts';
 import { InfoToggle } from '../detail/InfoPanel.tsx';
 import { useDetail } from '../detail/state.ts';
 import { clock } from '../format.ts';
@@ -15,6 +18,17 @@ import type { BoardController } from './BoardController.ts';
 
 const SPEEDS = [0.25, 0.5, 1, 2];
 
+// The badge's name for an engine tier.
+function tierLabel(a: AssetRecord, tier: number): string {
+  if (tier >= 3 && a.original) return 'Original';
+  if (tier >= 2 && a.l2) return `${a.l2.height}p`;
+  return tier >= 1 ? `${a.l1.height}p` : 'Preview';
+}
+
+// What's on screen, and what it's moving up to while that loads.
+const qualityText = (a: AssetRecord, tier: number, target: number) =>
+  tier < target ? `${tierLabel(a, tier)} → ${tierLabel(a, target)}` : tierLabel(a, tier);
+
 export function FocusBar({ ctrl, focus }: { ctrl: BoardController; focus: FocusTarget }) {
   const placement = useStore((s) => s.placements[focus.placementId]);
   const asset = useStore((s) => (placement ? s.assets[placement.assetId] : undefined));
@@ -22,10 +36,13 @@ export function FocusBar({ ctrl, focus }: { ctrl: BoardController; focus: FocusT
   const track = useRef<HTMLDivElement>(null);
   const head = useRef<HTMLDivElement>(null);
   const time = useRef<HTMLSpanElement>(null);
+  const quality = useRef<HTMLSpanElement>(null);
   const duration = asset?.duration ?? 1;
   const fps = asset?.fps || 30;
   const inPoint = placement?.inPoint ?? 0;
   const outPoint = placement?.outPoint ?? duration;
+  const player = useMemo(() => focusPlayhead(ctrl), [ctrl]);
+  useWatchClipComments(asset?.id);
 
   useEffect(
     () =>
@@ -34,8 +51,10 @@ export function FocusBar({ ctrl, focus }: { ctrl: BoardController; focus: FocusT
         const pct = (msg.time / duration) * 100;
         if (head.current) head.current.style.left = `${pct}%`;
         if (time.current) time.current.textContent = clock(msg.time, fps);
+        const text = asset ? qualityText(asset, msg.tier, msg.target) : '';
+        if (quality.current && quality.current.textContent !== text) quality.current.textContent = text;
       }),
-    [duration, fps],
+    [duration, fps, asset],
   );
 
   if (!placement || !asset) return null;
@@ -82,7 +101,7 @@ export function FocusBar({ ctrl, focus }: { ctrl: BoardController; focus: FocusT
     el.addEventListener('pointerup', up);
   };
 
-  const quality = asset.original ? 'Original' : asset.l2 ? `${asset.l2.height}p` : `${asset.l1.height}p`;
+  const best = asset.original ? 3 : asset.l2 ? 2 : 1;
   const ranged = placement.inPoint !== null || placement.outPoint !== null;
 
   return (
@@ -103,6 +122,7 @@ export function FocusBar({ ctrl, focus }: { ctrl: BoardController; focus: FocusT
         <div className="timeline-range" style={{ left: `${(inPoint / duration) * 100}%`, width: `${((outPoint - inPoint) / duration) * 100}%` }} />
         <div className="timeline-handle in" title="In point (I)" style={{ left: `${(inPoint / duration) * 100}%` }} onPointerDown={dragHandle('in')} />
         <div className="timeline-handle out" title="Out point (O)" style={{ left: `${(outPoint / duration) * 100}%` }} onPointerDown={dragHandle('out')} />
+        <CommentMarkers asset={asset} player={player} />
         <div className="timeline-head" ref={head} />
       </div>
       <span className="focus-duration">{clock(duration, fps)}</span>
@@ -117,8 +137,8 @@ export function FocusBar({ ctrl, focus }: { ctrl: BoardController; focus: FocusT
         onChange={(speed) => setFocus({ ...focus, speed })}
         options={SPEEDS.map((s) => ({ value: s, label: s === 0.25 ? '¼×' : s === 0.5 ? '½×' : `${s}×` }))}
       />
-      <span className="badge neutral" title="Quality shown">
-        {quality}
+      <span ref={quality} className="badge neutral" title="Quality on screen">
+        {qualityText(asset, 0, best)}
       </span>
       <span className="sep" />
       <InfoToggle on={infoPanel} />

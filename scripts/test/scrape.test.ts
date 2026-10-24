@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { slug, tagLabel } from '../../src/media/vocabulary.ts';
+import { HELD_BACK, pacer, Refused } from '../scrape/download.ts';
 import { agentReasons, extractPage, mediaUrlsIn, wantsRender } from '../scrape/extract.ts';
 import { groupItems, stripSiteName, toItem } from '../scrape/items.ts';
 import { parseRobots } from '../scrape/site.ts';
@@ -245,4 +246,35 @@ test('template-wide player markup is chrome too', () => {
   const s: PageSignals = { videoTags: 0, unresolvedVideos: 0, playerHints: 3, moreButton: false, textLength: 500, scripts: 2, shell: false };
   assert.deepEqual(agentReasons(s, 0, { hintsAreChrome: true }), []);
   assert.equal(agentReasons(s, 0).length, 1);
+});
+
+test('the Vimeo pacer runs one request at a time and stops after refusals in a row', async () => {
+  let trips = 0;
+  const p = pacer({ gapMs: 0, jitterMs: 0, tripAfter: 3, onTrip: () => trips++ });
+  let running = 0;
+  let most = 0;
+  const ran: string[] = [];
+  const task = (name: string, outcome: 'ok' | 'refused' | 'error') => () =>
+    p.run(async () => {
+      running++;
+      most = Math.max(most, running);
+      await new Promise((r) => setTimeout(r, 5));
+      running--;
+      ran.push(name);
+      if (outcome === 'refused') throw new Refused('HTTP 403');
+      if (outcome === 'error') throw new Error('HTTP 401');
+      return name;
+    });
+  // A video's own failure (a 401) breaks a run of refusals; three in a row trip it.
+  const outcomes = ['refused', 'refused', 'error', 'refused', 'ok', 'refused', 'refused', 'refused', 'ok', 'ok'] as const;
+  const settled = await Promise.allSettled(outcomes.map((o, i) => task(`t${i}`, o)()));
+  assert.equal(most, 1);
+  assert.equal(trips, 1);
+  assert.ok(p.tripped);
+  assert.deepEqual(ran, ['t0', 't1', 't2', 't3', 't4', 't5', 't6', 't7']);
+  assert.deepEqual(
+    settled.slice(8).map((s) => s.status === 'rejected' && (s.reason as Error).message),
+    [HELD_BACK, HELD_BACK],
+  );
+  assert.equal(settled[4].status === 'fulfilled' && settled[4].value, 't4');
 });

@@ -8,10 +8,175 @@
   min-height: 0;
 }
 
-.collection {
+/* Breadcrumb pills in place of a title: each goes to its folder and takes
+   drops. Deep paths squeeze the folders above this one first. */
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 1 auto;
+  min-width: 40px;
+  max-width: 180px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: var(--pill);
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  transition: background 0.12s, color 0.12s, box-shadow 0.12s;
+}
+
+.crumb:first-child {
+  flex-shrink: 0;
+}
+
+.crumb:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.crumb.current {
+  flex-shrink: 0.4;
+  min-width: 64px;
+  background: var(--surface-3);
+  color: var(--text);
+  font-weight: 600;
+  cursor: default;
+}
+
+.crumb.drop {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  color: var(--accent);
+}
+
+.crumb-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crumb .count {
+  color: var(--text-3);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.crumb.drop .count {
+  color: inherit;
+}
+
+.crumb-sep {
+  flex: none;
+  color: var(--text-3);
+}
+
+.crumb.renaming {
+  padding: 0;
+  background: none;
+}
+
+.crumb.renaming .rename {
+  width: 170px;
+  height: 26px;
+  margin: 0;
+  padding: 0 10px;
+  border-radius: var(--pill);
+  font-weight: 600;
+}
+
+.collection,
+.folder {
   position: absolute;
   cursor: pointer;
+  user-select: none;
+}
+
+.collection {
   border-radius: var(--radius-md);
+}
+
+/* Folders: compact tiles above the collections, or rows above them in the list. */
+.folder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: var(--radius-sm);
+  transition: background 0.12s, box-shadow 0.12s;
+}
+
+.folder.grid {
+  padding: 0 4px 0 10px;
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.folder.grid:hover {
+  background: var(--surface-3);
+}
+
+.folder-glyph {
+  flex: none;
+  color: var(--text-2);
+}
+
+.folder .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 550;
+}
+
+.folder .sub {
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.folder.selected {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.folder.drop {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.folder.selected .folder-glyph,
+.folder.drop .folder-glyph {
+  color: var(--accent);
+}
+
+/* While searching: where a match is filed. */
+.where {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-size: 10.5px;
+}
+
+.list .where {
+  margin-right: 12px;
 }
 
 .collection.grid .cover {
@@ -72,12 +237,18 @@
   font-size: 10.5px;
 }
 
-.collection .more {
+.collection .more,
+.folder .more {
   opacity: 0;
   margin-right: -4px;
 }
 
+.folder.grid .more {
+  margin-right: 0;
+}
+
 .collection:hover .more,
+.folder:hover .more,
 .collection .more[aria-pressed='true'] {
   opacity: 1;
 }
@@ -94,11 +265,13 @@
   background: var(--surface);
   box-shadow: 0 0 0 3px var(--accent-soft);
   font-weight: 550;
+  user-select: text;
 }
 
 /* List view: a table, like a database view. */
 .list-head,
-.collection.list {
+.collection.list,
+.folder.list {
   display: grid;
   grid-template-columns: 68px minmax(0, 1fr) 52px 104px 80px 28px;
   align-items: center;
@@ -118,24 +291,40 @@
   grid-column: 2;
 }
 
-.collection.list {
+.collection.list,
+.folder.list {
+  gap: 0;
   padding-right: 8px;
   border-radius: 0;
   border-bottom: 1px solid var(--border);
 }
 
-.collection.list:hover {
+.collection.list:hover,
+.folder.list:hover {
   background: color-mix(in srgb, var(--surface-hover) 50%, transparent);
 }
 
-.collection.list .thumb {
+.folder.list.selected,
+.folder.list.drop {
+  background: var(--accent-soft);
+}
+
+.collection.list .thumb,
+.folder.list .thumb {
   position: absolute;
   top: 7px;
   border-radius: 4px;
   box-shadow: 0 0 0 1px var(--border);
 }
 
-.collection.list .col-name {
+.folder-thumb {
+  display: grid;
+  place-items: center;
+  background: var(--surface-2);
+}
+
+.collection.list .col-name,
+.folder.list .col-name {
   grid-column: 2;
   display: flex;
   align-items: center;

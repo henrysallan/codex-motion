@@ -288,7 +288,7 @@ function Composer({
   );
 }
 
-function AuthorAvatar({ author }: { author: Author }) {
+export function AuthorAvatar({ author }: { author: Author }) {
   if (author.avatarUrl) return <img className="avatar comment-avatar" src={author.avatarUrl} alt="" referrerPolicy="no-referrer" draggable={false} />;
   return (
     <span className="avatar comment-avatar" style={{ background: author.color }} aria-hidden>

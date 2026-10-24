@@ -11,7 +11,7 @@ import { looksLikeFilename } from './urls.ts';
 import { pool } from '../lib/ffmpeg.ts';
 import type { PageMeta, ProjectInfo, ScrapedItem } from './types.ts';
 
-const Enrichment = z.object({
+export const Enrichment = z.object({
   is_project_page: z.boolean().describe('true when the page presents one piece of work (a project or case study), not a listing or about page'),
   project: z.object({
     title: z.string().nullable(),
@@ -26,7 +26,7 @@ const Enrichment = z.object({
   videos: z.array(z.object({ index: z.number().int(), title: z.string().nullable(), description: z.string().nullable() })),
 });
 
-const SYSTEM = `You extract structured facts about creative work from a studio or agency web page, for a motion-design reference library. Use only what the page states; leave a field null or empty rather than guess. Keep names and titles as the page writes them. A player title is often just the uploaded file's name ("Amazon_CS_04_System"); never use one of those as a title — give the video a short readable title from the page instead, or null.`;
+export const SYSTEM = `You extract structured facts about creative work from a studio or agency web page, for a motion-design reference library. Use only what the page states; leave a field null or empty rather than guess. Keep names and titles as the page writes them. A player title is often just the uploaded file's name ("Amazon_CS_04_System"); never use one of those as a title — give the video a short readable title from the page instead, or null.`;
 
 export interface PageVideos {
   url: string;
@@ -63,7 +63,7 @@ export async function enrichPages(pages: PageVideos[], model: string, log: (s: s
   return { done, spent: cost(model, usage) };
 }
 
-function describePage(p: PageVideos): string {
+export function describePage(p: PageVideos): string {
   const m = p.meta;
   const videos = p.items.map((item, i) => {
     const a = item.appearances.find((x) => x.pageUrl === p.url) ?? item.appearances[0];

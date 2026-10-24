@@ -19,6 +19,7 @@ const slot = (o: Partial<Slot> = {}): Slot => ({
   focused: false,
   needsVideo: false,
   fastScroll: false,
+  dimmed: false,
   ...o,
 });
 
@@ -51,4 +52,16 @@ test('promotion resumes once the scroll slows', () => {
   assert.deepEqual(tiers([s]), [0]);
   s.fastScroll = false;
   assert.deepEqual(tiers([s]), [1]);
+});
+
+test('in focus mode the focused item takes L2 and its dimmed neighbours start nothing new', () => {
+  const big = { h: 900, w: 1600, visibleArea: 1600 * 900 };
+  const focused = slot({ ...big, focused: true });
+  const fresh = slot({ ...big, dimmed: true });
+  const playing = slot({ ...big, dimmed: true, current: 1 });
+  assert.deepEqual(tiers([fresh, playing, focused]), [0, 1, 2]);
+  // Leaving focus lets them grow again.
+  fresh.dimmed = false;
+  playing.dimmed = false;
+  assert.deepEqual(tiers([fresh, playing]), [2, 2]);
 });

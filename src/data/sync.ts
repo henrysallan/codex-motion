@@ -54,6 +54,16 @@ export async function flush(): Promise<void> {
   if (outbox.size) schedule(300);
 }
 
+// Sends what's waiting and resolves once nothing is left or in flight, or
+// after `ms`: for a step that has to come after every edit made so far.
+export async function drain(ms = 5000): Promise<void> {
+  const until = Date.now() + ms;
+  while ((flushing || outbox.size) && Date.now() < until) {
+    if (!flushing) await flush();
+    if (flushing || outbox.size) await new Promise((done) => setTimeout(done, 100));
+  }
+}
+
 onAuthChange((session) => {
   if (session && outbox.size) schedule(0);
 });

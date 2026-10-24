@@ -1,7 +1,7 @@
 // The clip details view: which asset is open (and the Feed order it was
-// opened from, so arrows step through it), and whether the info panel
-// shows. Kept apart from the app store; the panel preference persists on
-// its own.
+// opened from, so arrows step through it), whether the info panel shows,
+// and which of its tabs. Kept apart from the app store; the panel
+// preferences persist on their own.
 
 import { create } from 'zustand';
 
@@ -12,17 +12,34 @@ interface DetailState {
   open: { assetId: string; ids: string[] } | null;
   // The info panel beside the details player and canvas focus mode.
   infoPanel: boolean;
+  // The panel's tab: what's known about the clip, or comments on it.
+  infoTab: InfoTab;
 }
 
-function loadInfoPanel(): boolean {
+export type InfoTab = 'info' | 'comments';
+
+type Prefs = Pick<DetailState, 'infoPanel' | 'infoTab'>;
+
+function loadPrefs(): Prefs {
+  let saved: Partial<Prefs> = {};
   try {
-    return (JSON.parse(localStorage.getItem(KEY) ?? '{}') as { infoPanel?: boolean }).infoPanel ?? true;
+    saved = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Prefs>;
   } catch {
-    return true;
+    // Unreadable: defaults.
+  }
+  return { infoPanel: saved.infoPanel ?? true, infoTab: saved.infoTab === 'comments' ? 'comments' : 'info' };
+}
+
+function savePrefs(): void {
+  const { infoPanel, infoTab } = useDetail.getState();
+  try {
+    localStorage.setItem(KEY, JSON.stringify({ infoPanel, infoTab }));
+  } catch {
+    // Storage full or blocked: the choice just doesn't persist.
   }
 }
 
-export const useDetail = create<DetailState>(() => ({ open: null, infoPanel: loadInfoPanel() }));
+export const useDetail = create<DetailState>(() => ({ open: null, ...loadPrefs() }));
 
 export function openDetail(assetId: string, ids: string[]): void {
   useDetail.setState({ open: { assetId, ids } });
@@ -52,9 +69,10 @@ export function infoPanelInset(paneW: number): number {
 
 export function setInfoPanel(infoPanel: boolean): void {
   useDetail.setState({ infoPanel });
-  try {
-    localStorage.setItem(KEY, JSON.stringify({ infoPanel }));
-  } catch {
-    // Storage full or blocked: the choice just doesn't persist.
-  }
+  savePrefs();
+}
+
+export function setInfoTab(infoTab: InfoTab): void {
+  useDetail.setState({ infoTab });
+  savePrefs();
 }

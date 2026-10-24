@@ -1,22 +1,23 @@
 // Draws views. Pipelines, the sampler and the sprite atlas are shared; each
 // view gets a ViewTarget with its own buffers and depth texture.
 //
-// A frame: background, every visible L0 tile in one instanced draw, decoded
-// video frames over their tiles, then overlay rects. Stacking uses the
-// depth buffer rather than draw order: each item gets a depth from its
-// z-order, L0 tiles write it, and video quads test against it (less-equal,
-// so a video passes over its own tile but stays under anything stacked
-// above). Video quads blend for the tier crossfade.
+// A frame: background, backdrops (board frames), every visible L0 tile in
+// one instanced draw, decoded video frames over their tiles, then overlay
+// rects. Stacking uses the depth buffer rather than draw order: each item
+// and backdrop gets a depth from its z-order, backdrops and L0 tiles write
+// it, and video quads test against it (less-equal, so a video passes over
+// its own tile but stays under anything stacked above). Video quads blend
+// for the tier crossfade.
 
 import type { SpriteAtlas } from './atlas.ts';
 import type { RGB } from './protocol.ts';
 import { backgroundShader, overlayShader, tileShader, videoShader } from './shaders.ts';
 
 // Floats per tile instance / overlay rect; must match shaders.ts.
-export const TILE_FLOATS = 12;
+export const TILE_FLOATS = 16;
 export const OVERLAY_FLOATS = 16;
 const VIDEO_SLOT_BYTES = 256;
-const VIDEO_FLOATS = 16;
+const VIDEO_FLOATS = 20;
 const GLOBALS_FLOATS = 20;
 
 export interface Globals {
@@ -44,6 +45,9 @@ export interface VideoDraw {
   depth: number;
   dim: number;
   crop: [number, number, number, number];
+  // Device px; a negative width: no clip.
+  clip: [number, number, number, number];
+  clipRadius: number;
 }
 
 // Per-view GPU resources.
@@ -54,6 +58,9 @@ export class ViewTarget {
   tileCapacity = 0;
   overlay: GPUBuffer | null = null;
   overlayCapacity = 0;
+  backdrops: GPUBuffer | null = null;
+  backdropCapacity = 0;
+  backdropBindGroup: GPUBindGroup | null = null;
   video: GPUBuffer | null = null;
   videoCapacity = 0;
   videoData = new Float32Array(0);
@@ -72,6 +79,7 @@ export class ViewTarget {
     this.globals.destroy();
     this.tiles?.destroy();
     this.overlay?.destroy();
+    this.backdrops?.destroy();
     this.video?.destroy();
     this.depth?.destroy();
   }
@@ -89,6 +97,7 @@ export class Renderer {
   private readonly tilePipeline: GPURenderPipeline;
   private readonly videoPipeline: GPURenderPipeline;
   private readonly overlayPipeline: GPURenderPipeline;
+  private readonly backdropPipeline: GPURenderPipeline;
 
   constructor(device: GPUDevice, format: GPUTextureFormat, atlas: SpriteAtlas) {
     this.device = device;
@@ -149,6 +158,8 @@ export class Renderer {
     this.tilePipeline = pipeline('tiles', tileShader, [this.tileLayout], depth(true, 'less-equal'), straight);
     this.videoPipeline = pipeline('video', videoShader, [this.globalsLayout, this.videoLayout], depth(false, 'less-equal'), straight);
     this.overlayPipeline = pipeline('overlay', overlayShader, [this.overlayLayout], depth(false, 'always'), premultiplied);
+    // Backdrops are overlay rects that stack with the tiles.
+    this.backdropPipeline = pipeline('backdrops', overlayShader, [this.overlayLayout], depth(true, 'less-equal'), premultiplied);
   }
 
   createTarget(): ViewTarget {
@@ -164,6 +175,8 @@ export class Renderer {
     videos: VideoDraw[],
     overlay: Float32Array,
     overlayCount: number,
+    backdrops: Float32Array,
+    backdropCount: number,
   ): void {
     const device = this.device;
     const gd = t.globalsData;
@@ -186,6 +199,14 @@ export class Renderer {
     }
     if (overlayCount > 0) device.queue.writeBuffer(t.overlay!, 0, overlay, 0, overlayCount * OVERLAY_FLOATS);
 
+    if (backdropCount > t.backdropCapacity) {
+      t.backdrops?.destroy();
+      t.backdropCapacity = Math.max(16, backdropCount * 2);
+      t.backdrops = device.createBuffer({ size: t.backdropCapacity * OVERLAY_FLOATS * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+      t.backdropBindGroup = null;
+    }
+    if (backdropCount > 0) device.queue.writeBuffer(t.backdrops!, 0, backdrops, 0, backdropCount * OVERLAY_FLOATS);
+
     if (videos.length > t.videoCapacity) {
       t.video?.destroy();
       t.videoCapacity = Math.max(16, videos.length * 2);
@@ -195,7 +216,7 @@ export class Renderer {
     const stride = VIDEO_SLOT_BYTES / 4;
     for (let i = 0; i < videos.length; i++) {
       const v = videos[i];
-      t.videoData.set([v.x, v.y, v.w, v.h, v.frame.displayWidth, v.frame.displayHeight, v.alpha, v.depth, v.dim, 0, 0, 0, ...v.crop], i * stride);
+      t.videoData.set([v.x, v.y, v.w, v.h, v.frame.displayWidth, v.frame.displayHeight, v.alpha, v.depth, v.dim, v.clipRadius, 0, 0, ...v.crop, ...v.clip], i * stride);
     }
     if (videos.length > 0) device.queue.writeBuffer(t.video!, 0, t.videoData, 0, videos.length * stride);
 
@@ -212,6 +233,19 @@ export class Renderer {
     pass.setPipeline(this.backgroundPipeline);
     pass.setBindGroup(0, t.globalsBindGroup);
     pass.draw(3);
+
+    if (backdropCount > 0) {
+      t.backdropBindGroup ??= device.createBindGroup({
+        layout: this.overlayLayout,
+        entries: [
+          { binding: 0, resource: { buffer: t.globals } },
+          { binding: 1, resource: { buffer: t.backdrops! } },
+        ],
+      });
+      pass.setPipeline(this.backdropPipeline);
+      pass.setBindGroup(0, t.backdropBindGroup);
+      pass.draw(4, backdropCount);
+    }
 
     if (tileCount > 0) {
       pass.setPipeline(this.tilePipeline);

@@ -13,7 +13,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { EmbeddingIndex, Library } from '../src/media/library.ts';
 import { packVectors, type SearchBundle, type SearchDoc, type SearchManifest, type SearchPage } from '../src/search/bundle.ts';
-import { classify, PROJECT_TYPES, SECTORS, splitStudios, yearOf } from '../src/search/taxonomy.ts';
+import { hostLabel, searchDoc, searchPage } from '../src/search/docs.ts';
+import { splitStudios } from '../src/search/taxonomy.ts';
 import { arg } from './lib/ffmpeg.ts';
 
 const outRoot = path.resolve(arg('out', 'public/media'));
@@ -41,7 +42,7 @@ function siteName(host: string): string {
   // A studio credited on the site that spells its host: "Porto Rocha" for portorocha.com.
   const base = host.replace(/^www\./, '').split('.')[0];
   const spelled = assets.flatMap((a) => splitStudios(a.source?.agency)).find((name) => squash(name) === squash(base));
-  return spelled ?? base.charAt(0).toUpperCase() + base.slice(1);
+  return spelled ?? hostLabel(host);
 }
 
 // ---- pages ---------------------------------------------------------------------------
@@ -54,22 +55,7 @@ function pageOf(src: NonNullable<Library['assets'][number]['source']>): number {
   const known = pageIndex.get(src.pageUrl);
   if (known !== undefined) return known;
   sites[src.site] ??= siteName(src.site);
-  const seen = new Set<string>();
-  const tags = (src.tags ?? []).map((t) => t.trim()).filter((t) => t && !seen.has(t.toLowerCase()) && seen.add(t.toLowerCase()));
-  const studios = [...new Set([sites[src.site], ...splitStudios(src.agency)])];
-  const year = yearOf(src.year);
-  const page: SearchPage = {
-    url: src.pageUrl,
-    ...(src.pageTitle ? { title: src.pageTitle } : {}),
-    ...(src.description ? { description: src.description.slice(0, 480) } : {}),
-    ...(src.client ? { client: src.client.trim() } : {}),
-    studios,
-    ...(year ? { year } : {}),
-    tags,
-    projectTypes: classify(tags, PROJECT_TYPES),
-    sectors: classify(tags, SECTORS),
-    site: src.site,
-  };
+  const page = searchPage(src, sites[src.site]);
   pageIndex.set(src.pageUrl, pages.length);
   pages.push(page);
   return pages.length - 1;
@@ -77,17 +63,7 @@ function pageOf(src: NonNullable<Library['assets'][number]['source']>): number {
 
 // ---- docs and vectors ----------------------------------------------------------------
 
-const docs: SearchDoc[] = library.assets.map((a) => ({
-  id: a.id,
-  title: a.source?.title || a.name,
-  page: a.source ? pageOf(a.source) : -1,
-  ...(a.analysis?.caption ? { caption: a.analysis.caption } : {}),
-  tags: a.analysis?.tags ?? [],
-  duration: a.duration,
-  width: a.width,
-  height: a.height,
-  added: a.source ? Math.round(Date.parse(a.source.scrapedAt) / 1000) || 0 : 0,
-}));
+const docs: SearchDoc[] = library.assets.map((a) => searchDoc(a, a.source ? pageOf(a.source) : -1));
 
 let model: string | null = null;
 let dims = 0;

@@ -11,6 +11,7 @@ import type {
   FromWorker,
   OverlayRect,
   ToWorker,
+  ViewBackdrop,
   ViewItem,
   ViewKind,
   ViewStyle,
@@ -57,6 +58,10 @@ export class EngineView {
 
   setItems(items: ViewItem[]): void {
     this.client.send({ type: 'view:items', id: this.id, items });
+  }
+
+  setBackdrops(backdrops: ViewBackdrop[]): void {
+    this.client.send({ type: 'view:backdrops', id: this.id, backdrops });
   }
 
   setCamera(camera: CameraState): void {

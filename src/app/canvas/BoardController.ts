@@ -1,24 +1,32 @@
 // The canvas pane's interaction core, kept out of React so gestures never
 // wait on a render: camera, selection, marquee, move with snap, resize,
-// hover scrub, fly-in of added clips, and focus mode.
+// frames, hover scrub, fly-in of added clips, and focus mode.
+//
+// Frames sit under everything else, stacked among themselves. Each draws
+// its clips right above it, clipped to its box; clips in no frame draw above
+// all frames. A clip moved by itself goes in the frame under the pointer
+// when it's dropped (or out of any); a moved frame carries its clips.
 //
 // The store is the source of truth. The controller mirrors one collection,
 // draws it into its engine view, and writes back once per gesture (one
 // undo step). Mid-gesture positions live only here.
 
 import type { EngineView } from '../../engine/client.ts';
-import type { CameraState, OverlayRect, ViewItem } from '../../engine/protocol.ts';
-import type { Note, Placement } from '../../data/model.ts';
+import type { CameraState, OverlayRect, ViewBackdrop, ViewItem } from '../../engine/protocol.ts';
+import type { Frame, Note, Placement } from '../../data/model.ts';
 import { Camera, easeInOut, fitRect, lerpCamera, MAX_ZOOM, MIN_ZOOM, type Rect } from '../camera.ts';
 import { engine } from '../engine.ts';
 import { dropTargets, type DropTarget, on } from '../events.ts';
 import { addAssets } from '../actions.ts';
 import { infoPanelInset, useDetail } from '../detail/state.ts';
+import { checkboxAt } from './lines.ts';
 import { space, spaceTap } from '../keys.ts';
 import { arrange, bounds } from '../layout/arrange.ts';
 import {
+  addFrame,
   addNote,
   deleteItems,
+  framesOf,
   notesOf,
   placementsOf,
   redo,
@@ -26,14 +34,15 @@ import {
   setFocus,
   toggleNoteFormat,
   setSelection,
+  topFrameZ,
   topZ,
   undo,
   updatePrefs,
   useStore,
 } from '../store.ts';
-import { overlayColors, type Resolved } from '../theme.ts';
+import { frameFill, frameStroke, overlayColors, type Resolved } from '../theme.ts';
 
-export type Tool = 'select' | 'hand' | 'note' | 'comment';
+export type Tool = 'select' | 'hand' | 'note' | 'frame' | 'comment';
 
 export interface BoardCallbacks {
   // Camera moved (for the zoom readout).
@@ -52,7 +61,22 @@ export interface BoardCallbacks {
 type Gesture =
   | { kind: 'pan'; pointerId: number; x: number; y: number }
   | { kind: 'marquee'; pointerId: number; x0: number; y0: number; x1: number; y1: number; base: Set<string> }
-  | { kind: 'move'; pointerId: number; sx: number; sy: number; wx: number; wy: number; originals: Map<string, Rect>; moved: boolean; bbox: Rect }
+  | {
+      kind: 'move';
+      pointerId: number;
+      sx: number;
+      sy: number;
+      wx: number;
+      wy: number;
+      originals: Map<string, Rect>;
+      moved: boolean;
+      bbox: Rect;
+      // Clips moving on their own rather than carried by a moving frame, and
+      // the frame they'd go in if dropped now.
+      lifted: Set<string>;
+      frames: Set<string>;
+      target: string | null;
+    }
   | {
       kind: 'resize';
       pointerId: number;
@@ -71,6 +95,8 @@ type Gesture =
   // Text tool press, placed on release: a click makes a default box, a drag
   // draws one (world units).
   | { kind: 'note'; pointerId: number; sx: number; sy: number; x0: number; y0: number; x1: number; y1: number; dragged: boolean }
+  // Frame tool press: a drag draws a frame, a click makes a default one.
+  | { kind: 'frame'; pointerId: number; sx: number; sy: number; x0: number; y0: number; x1: number; y1: number; dragged: boolean }
   // Comment tool press: a click drops a pin on release, a drag pans.
   | { kind: 'comment'; pointerId: number; sx: number; sy: number; x: number; y: number; moved: boolean };
 
@@ -88,6 +114,11 @@ const NOTE_FALLBACK_H = 80;
 const MIN_CLIP_SIDE = 24;
 const MIN_NOTE_W = 40;
 const MIN_NOTE_H = 12;
+const MIN_FRAME_SIDE = 40;
+// A frame made with a click, in world units.
+const NEW_FRAME = { w: 640, h: 400 };
+// Corner radius of frames and of the clipping inside them, CSS px.
+const FRAME_RADIUS = 4;
 const CAMERA_KEY = 'trace.camera.';
 
 export class BoardController {
@@ -107,8 +138,12 @@ export class BoardController {
 
   private placements = new Map<string, Placement>();
   private notes = new Map<string, Note>();
-  // Placements topmost first, for hit-testing.
-  private stack: Placement[] = [];
+  private frames = new Map<string, Frame>();
+  // The clips in each frame.
+  private children = new Map<string, Placement[]>();
+  // Frames and clips in drawing order, bottom first: each frame, then its
+  // clips, then the clips in no frame.
+  private order: { id: string; frame: boolean }[] = [];
   private nums = new Map<string, number>();
   private byNum = new Map<number, string>();
   private nextNum = 1;
@@ -157,7 +192,7 @@ export class BoardController {
     this.sync();
     this.unsubs.push(
       useStore.subscribe((s, prev) => {
-        if (s.placements !== prev.placements || s.notes !== prev.notes || s.selection !== prev.selection) this.sync();
+        if (s.placements !== prev.placements || s.notes !== prev.notes || s.frames !== prev.frames || s.selection !== prev.selection) this.sync();
         if (s.focus !== prev.focus) this.syncFocus();
       }),
       on('added', (e) => e.collectionId === collectionId && this.flyIn(e.ids, e.from)),
@@ -200,7 +235,7 @@ export class BoardController {
       drop: (assetIds, x, y) => {
         const r = host.getBoundingClientRect();
         const [wx, wy] = this.camera.toWorld(x - r.left, y - r.top);
-        addAssets(collectionId, assetIds, { x: wx, y: wy });
+        addAssets(collectionId, assetIds, { x: wx, y: wy }, this.frameUnder(wx, wy)?.id);
       },
     };
     if (!readonly) dropTargets.add(this.dropTarget);
@@ -233,6 +268,8 @@ export class BoardController {
 
   setTheme(theme: Resolved): void {
     this.theme = theme;
+    // Frame fills are per theme.
+    this.pushItems();
     this.pushOverlay();
   }
 
@@ -245,13 +282,24 @@ export class BoardController {
   // ---- store mirror --------------------------------------------------------
 
   private sync(): void {
-    if (this.gesture && this.gesture.kind !== 'pan' && this.gesture.kind !== 'marquee' && this.gesture.kind !== 'comment') return;
+    const g = this.gesture;
+    if (g && g.kind !== 'pan' && g.kind !== 'marquee' && g.kind !== 'frame' && g.kind !== 'comment') return;
     const s = useStore.getState();
     this.placements = new Map(placementsOf(this.collectionId, s.placements).map((p) => [p.id, p]));
     this.notes = new Map(notesOf(this.collectionId, s.notes).map((n) => [n.id, n]));
-    this.stack = [...this.placements.values()].sort((a, b) => b.z - a.z);
-    this.selection = new Set(s.selection.filter((id) => this.placements.has(id) || this.notes.has(id)));
-    if (this.hover && !this.placements.has(this.hover)) this.hover = null;
+    this.frames = new Map(framesOf(this.collectionId, s.frames).map((f) => [f.id, f]));
+    this.children = new Map([...this.frames.keys()].map((id) => [id, []]));
+    const loose: Placement[] = [];
+    for (const p of this.placements.values()) (this.inFrame(p) ? this.children.get(p.frameId!)! : loose).push(p);
+    const byZ = (a: { z: number }, b: { z: number }) => a.z - b.z;
+    this.order = [];
+    for (const f of [...this.frames.values()].sort(byZ)) {
+      this.order.push({ id: f.id, frame: true });
+      for (const p of this.children.get(f.id)!.sort(byZ)) this.order.push({ id: p.id, frame: false });
+    }
+    for (const p of loose.sort(byZ)) this.order.push({ id: p.id, frame: false });
+    this.selection = new Set(s.selection.filter((id) => this.placements.has(id) || this.notes.has(id) || this.frames.has(id)));
+    if (this.hover && !this.placements.has(this.hover) && !this.frames.has(this.hover)) this.hover = null;
     this.pushItems();
     this.pushOverlay();
   }
@@ -274,11 +322,36 @@ export class BoardController {
     if (p) return p;
     const n = this.notes.get(id);
     if (n) return { x: n.x, y: n.y, w: n.w, h: this.noteHeight(id) };
-    return null;
+    return this.frames.get(id) ?? null;
   }
 
-  private notesOnly(): boolean {
-    for (const id of this.selection) if (!this.notes.has(id)) return false;
+  private inFrame(p: Placement): boolean {
+    return !!p.frameId && this.frames.has(p.frameId);
+  }
+
+  // Clips drawn above everything and not clipped: the focused one, and
+  // those being moved on their own (clipped to the frame they'd go in).
+  private lifted(): Set<string> {
+    const out = new Set<string>();
+    const g = this.gesture;
+    if (g?.kind === 'move' && g.moved) for (const id of g.lifted) out.add(id);
+    if (this.focusId) out.add(this.focusId);
+    return out;
+  }
+
+  // The frame a clip shows inside, if any.
+  private clipFrameOf(id: string, lifted: Set<string>): string | null {
+    if (lifted.has(id)) {
+      const g = this.gesture;
+      return g?.kind === 'move' && id !== this.focusId ? g.target : null;
+    }
+    const p = this.placements.get(id);
+    return p && this.inFrame(p) ? p.frameId! : null;
+  }
+
+  // A selection of only text boxes and frames resizes each axis on its own.
+  private noClips(): boolean {
+    for (const id of this.selection) if (this.placements.has(id)) return false;
     return this.selection.size > 0;
   }
 
@@ -296,6 +369,25 @@ export class BoardController {
   private pushItems(): void {
     const items: ViewItem[] = [];
     const now = performance.now();
+    // Engine z: drawing order, with lifted clips on top.
+    const lifted = this.lifted();
+    const zOf = new Map<string, number>();
+    for (const e of this.order) if (!lifted.has(e.id)) zOf.set(e.id, zOf.size);
+    for (const e of this.order) if (lifted.has(e.id)) zOf.set(e.id, zOf.size);
+    const backdrops: ViewBackdrop[] = [];
+    // Focus fades frames toward the board like the other clips.
+    const alpha = this.focusId ? 0.14 : 1;
+    const [sr, sg, sb, sa] = frameStroke[this.theme];
+    for (const f of this.frames.values()) {
+      backdrops.push({
+        ...this.boxOf(f.id)!,
+        z: zOf.get(f.id)!,
+        fill: [...frameFill(this.theme, f.color), alpha],
+        stroke: [sr, sg, sb, sa * alpha],
+        strokeWidth: 1,
+        radius: FRAME_RADIUS,
+      });
+    }
     for (const p of this.placements.values()) {
       let b: Rect = this.live.get(p.id) ?? p;
       const fly = this.flyIns.get(p.id);
@@ -303,6 +395,8 @@ export class BoardController {
         const t = easeInOut(Math.min(1, (now - fly.start) / FLY_MS));
         b = { x: fly.from.x + (p.x - fly.from.x) * t, y: fly.from.y + (p.y - fly.from.y) * t, w: fly.from.w + (p.w - fly.from.w) * t, h: fly.from.h + (p.h - fly.from.h) * t };
       }
+      const frame = this.clipFrameOf(p.id, lifted);
+      const fb = frame ? this.boxOf(frame) : null;
       items.push({
         id: this.num(p.id),
         assetId: p.assetId,
@@ -310,12 +404,14 @@ export class BoardController {
         y: b.y,
         w: b.w,
         h: b.h,
-        z: p.z,
+        z: zOf.get(p.id) ?? 0,
         inPoint: p.inPoint ?? undefined,
         outPoint: p.outPoint ?? undefined,
         dim: this.focusId && this.focusId !== p.id ? 0.14 : 1,
+        clip: fb ? { ...fb, radius: FRAME_RADIUS } : undefined,
       });
     }
+    this.view.setBackdrops(backdrops);
     this.view.setItems(items);
     // Comment pins and notes follow live geometry while dragged.
     for (const [id, b] of this.live) {
@@ -347,13 +443,14 @@ export class BoardController {
     const g = this.gesture;
     if (this.hover && !this.selection.has(this.hover) && !g && !this.focusId) {
       const b = this.boxOf(this.hover);
-      if (b) outline(b, 0.55, 1.5);
+      if (b) outline(b, 0.55, 1.5, this.frames.has(this.hover) ? FRAME_RADIUS : 2);
     }
+    if (g?.kind === 'move' && g.moved && g.target) outline(this.boxOf(g.target)!, 0.55, 1.5, FRAME_RADIUS);
     if (!this.focusId) {
       for (const id of this.selection) {
-        if (!this.placements.has(id)) continue;
+        if (!this.placements.has(id) && !this.frames.has(id)) continue;
         const b = this.boxOf(id);
-        if (b) outline(b, 1, 2);
+        if (b) outline(b, 1, 2, this.frames.has(id) ? FRAME_RADIUS : 2);
       }
       const box = this.selectionBounds();
       if (box && !(g?.kind === 'move' && g.moved)) {
@@ -363,6 +460,16 @@ export class BoardController {
           rects.push({ x: cx - s / 2, y: cy - s / 2, w: s, h: s, space: 'world', fill: [...handle, 1], stroke: [...accent, 1], strokeWidth: 1.5, radius: 2.5 });
         }
       }
+    }
+    if (g?.kind === 'frame' && g.dragged) {
+      rects.push({
+        ...normalize(g),
+        space: 'world',
+        fill: [...frameFill(this.theme, 'default'), 0.85],
+        stroke: [...accent, 0.9],
+        strokeWidth: 1,
+        radius: FRAME_RADIUS,
+      });
     }
     if (g?.kind === 'marquee' || (g?.kind === 'note' && g.dragged)) {
       rects.push({
@@ -444,7 +551,7 @@ export class BoardController {
   }
 
   contentBounds(): Rect | null {
-    const boxes: Rect[] = [...this.placements.values()];
+    const boxes: Rect[] = [...this.placements.values(), ...this.frames.values()];
     for (const n of this.notes.values()) boxes.push({ x: n.x, y: n.y, w: n.w, h: this.noteHeight(n.id) });
     return bounds(boxes);
   }
@@ -487,11 +594,33 @@ export class BoardController {
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   }
 
-  hitTest(sx: number, sy: number): Placement | null {
+  // The topmost clip or frame at a pane-relative point. A clip in a frame is
+  // only there where it shows.
+  private hitAt(sx: number, sy: number): { id: string; frame: boolean } | null {
     const [wx, wy] = this.camera.toWorld(sx, sy);
-    for (const p of this.stack) {
-      const b = this.live.get(p.id) ?? p;
-      if (wx >= b.x && wx < b.x + b.w && wy >= b.y && wy < b.y + b.h) return p;
+    const lifted = this.lifted();
+    const at = (id: string) => contains(this.boxOf(id)!, wx, wy);
+    for (const id of lifted) if (at(id)) return { id, frame: false };
+    for (let i = this.order.length - 1; i >= 0; i--) {
+      const e = this.order[i];
+      if (lifted.has(e.id) || !at(e.id)) continue;
+      const frame = e.frame ? null : this.clipFrameOf(e.id, lifted);
+      if (frame && !at(frame)) continue;
+      return e;
+    }
+    return null;
+  }
+
+  hitTest(sx: number, sy: number): Placement | null {
+    const hit = this.hitAt(sx, sy);
+    return hit && !hit.frame ? this.placements.get(hit.id)! : null;
+  }
+
+  // The topmost frame containing a world point, whatever is over it.
+  private frameUnder(wx: number, wy: number, except?: Set<string>): Frame | null {
+    for (let i = this.order.length - 1; i >= 0; i--) {
+      const e = this.order[i];
+      if (e.frame && !except?.has(e.id) && contains(this.boxOf(e.id)!, wx, wy)) return this.frames.get(e.id)!;
     }
     return null;
   }
@@ -547,7 +676,7 @@ export class BoardController {
   // Notes call this from their own pointerdown.
   pointerDownOnNote(e: PointerEvent | React.PointerEvent, id: string): void {
     // The comment tool pins over notes like anywhere else (onPointerDown).
-    if (e.button !== 0 || space.down || this.tool === 'hand' || this.tool === 'comment' || this.readonly) return;
+    if (e.button !== 0 || space.down || this.tool === 'hand' || this.tool === 'comment' || this.tool === 'frame' || this.readonly) return;
     e.stopPropagation();
     this.host.focus({ preventScroll: true });
     // Selection handles straddle the note's corners.
@@ -564,7 +693,7 @@ export class BoardController {
   private onPointerDown = (e: PointerEvent) => {
     // Notes handle their own presses (React runs after this native listener),
     // and comment pins and threads are their own UI.
-    if (e.button === 2 || commentIdOf(e.target) || (noteIdOf(e.target) && this.tool !== 'comment')) return;
+    if (e.button === 2 || commentIdOf(e.target) || (noteIdOf(e.target) && this.tool !== 'comment' && this.tool !== 'frame')) return;
     this.host.focus({ preventScroll: true });
     cancelAnimationFrame(this.cameraAnim);
     const p = this.local(e);
@@ -589,12 +718,19 @@ export class BoardController {
       if (this.hitTest(p.x, p.y)?.id !== this.focusId) this.exitFocus();
       return;
     }
+    if (this.tool === 'frame') {
+      this.host.setPointerCapture(e.pointerId);
+      const [wx, wy] = this.camera.toWorld(p.x, p.y);
+      this.gesture = { kind: 'frame', pointerId: e.pointerId, sx: p.x, sy: p.y, x0: wx, y0: wy, x1: wx, y1: wy, dragged: false };
+      this.setHover(null);
+      return;
+    }
     const corner = this.handleAt(p.x, p.y);
     if (corner >= 0) {
       this.beginResize(e, corner, p);
       return;
     }
-    const hit = this.hitTest(p.x, p.y);
+    const hit = this.hitAt(p.x, p.y);
     if (hit && this.tool === 'select') {
       this.selectFor(hit.id, e.shiftKey || e.metaKey || e.ctrlKey);
       this.beginMove(e, p);
@@ -627,16 +763,23 @@ export class BoardController {
     this.host.setPointerCapture(e.pointerId);
     const box = this.selectionBounds()!;
     const originals = new Map<string, Rect>();
-    const free = this.notesOnly();
+    const free = this.noClips();
     // Smallest scale per axis that keeps every item above its minimum size.
     let minX = 0;
     let minY = 0;
-    for (const id of this.selection) {
+    // Resizing frames alone shows more or less of their clips; with clips
+    // selected too, everything scales together, frames' clips included.
+    const ids = new Set(this.selection);
+    if (!free) for (const id of this.selection) for (const c of this.children.get(id) ?? []) ids.add(c.id);
+    for (const id of ids) {
       const o = { ...this.boxOf(id)! };
       originals.set(id, o);
       if (this.notes.has(id)) {
         minX = Math.max(minX, MIN_NOTE_W / o.w);
         minY = Math.max(minY, MIN_NOTE_H / o.h);
+      } else if (this.frames.has(id)) {
+        minX = Math.max(minX, MIN_FRAME_SIDE / o.w);
+        minY = Math.max(minY, MIN_FRAME_SIDE / o.h);
       } else {
         const m = MIN_CLIP_SIDE / Math.min(o.w, o.h);
         minX = Math.max(minX, m);
@@ -661,7 +804,16 @@ export class BoardController {
       const b = this.boxOf(id);
       if (b) originals.set(id, { ...b });
     }
-    this.gesture = { kind: 'move', pointerId: e.pointerId, sx: p.x, sy: p.y, wx, wy, originals, moved: false, bbox: bounds([...originals.values()])! };
+    const bbox = bounds([...originals.values()])!;
+    // Moving frames carry their clips; any other clip moves on its own.
+    const frames = new Set(ids.filter((id) => this.frames.has(id)));
+    const lifted = new Set<string>();
+    for (const id of ids) {
+      const pl = this.placements.get(id);
+      if (pl && !(pl.frameId && frames.has(pl.frameId))) lifted.add(id);
+    }
+    for (const f of frames) for (const c of this.children.get(f) ?? []) if (!originals.has(c.id)) originals.set(c.id, { ...this.boxOf(c.id)! });
+    this.gesture = { kind: 'move', pointerId: e.pointerId, sx: p.x, sy: p.y, wx, wy, originals, moved: false, bbox, lifted, frames, target: null };
   }
 
   private onPointerMove = (e: PointerEvent) => {
@@ -694,7 +846,7 @@ export class BoardController {
       return;
     }
     const [wx, wy] = this.camera.toWorld(p.x, p.y);
-    if (g.kind === 'note') {
+    if (g.kind === 'note' || g.kind === 'frame') {
       g.x1 = wx;
       g.y1 = wy;
       g.dragged ||= Math.hypot(p.x - g.sx, p.y - g.sy) >= MOVE_THRESHOLD_PX;
@@ -706,8 +858,13 @@ export class BoardController {
       g.y1 = wy;
       const r = { x: Math.min(g.x0, g.x1), y: Math.min(g.y0, g.y1), w: Math.abs(g.x1 - g.x0), h: Math.abs(g.y1 - g.y0) };
       const hit = new Set(g.base);
-      for (const pl of this.placements.values()) if (intersects(pl, r)) hit.add(pl.id);
+      // Clips by what shows of them; frames only when the marquee takes them in whole.
+      for (const pl of this.placements.values()) {
+        const f = this.inFrame(pl) ? this.frames.get(pl.frameId!)! : null;
+        if (intersects(pl, r) && (!f || intersects(f, r))) hit.add(pl.id);
+      }
       for (const n of this.notes.values()) if (intersects({ x: n.x, y: n.y, w: n.w, h: this.noteHeight(n.id) }, r)) hit.add(n.id);
+      for (const f of this.frames.values()) if (encloses(r, f)) hit.add(f.id);
       setSelection([...hit]);
       this.pushOverlay();
       return;
@@ -726,6 +883,7 @@ export class BoardController {
         dy = Math.round((g.bbox.y + dy) / SNAP) * SNAP - g.bbox.y;
       }
       for (const [id, o] of g.originals) this.live.set(id, { ...o, x: o.x + dx, y: o.y + dy });
+      g.target = g.lifted.size ? (this.frameUnder(wx, wy, g.frames)?.id ?? null) : null;
       this.pushItems();
       this.pushOverlay();
       return;
@@ -761,11 +919,17 @@ export class BoardController {
     if (this.host.hasPointerCapture(e.pointerId)) this.host.releasePointerCapture(e.pointerId);
     if (g.kind === 'move' && !g.moved) {
       // A click on one of several selected items selects just it.
-      const hit = this.hitTest(this.local(e).x, this.local(e).y);
+      const hit = this.hitAt(this.local(e).x, this.local(e).y);
       const sel = useStore.getState().selection;
       if (hit && !e.shiftKey && !e.metaKey && !e.ctrlKey && sel.length > 1) setSelection([hit.id]);
     }
-    if ((g.kind === 'move' && g.moved) || g.kind === 'resize') this.commitLive(g.kind === 'resize');
+    if (g.kind === 'move' && g.moved) this.commitLive(false, { ids: g.lifted, frameId: g.target });
+    if (g.kind === 'resize') this.commitLive(true);
+    if (g.kind === 'frame' && e.type === 'pointerup') {
+      this.setTool('select');
+      const r = g.dragged ? normalize(g) : { x: g.x0 - NEW_FRAME.w / 2, y: g.y0 - NEW_FRAME.h / 2, ...NEW_FRAME };
+      this.addFrameBox({ ...r, w: Math.max(MIN_FRAME_SIDE, r.w), h: Math.max(MIN_FRAME_SIDE, r.h) });
+    }
     if (g.kind === 'note' && e.type === 'pointerup') {
       this.setTool('select');
       if (g.dragged) {
@@ -788,18 +952,29 @@ export class BoardController {
   // Writes mid-gesture geometry back to the store as one undo step.
   // A move leaves notes' heights alone. A resize keeps a note's height only
   // if it made the box taller than its text; otherwise the box goes on
-  // fitting its text.
-  private commitLive(resized: boolean): void {
+  // fitting its text. Clips moved into a frame (or out of one) land on top.
+  private commitLive(resized: boolean, reparent?: { ids: Set<string>; frameId: string | null }): void {
     const ps: Placement[] = [];
     const ns: Note[] = [];
+    const fs: Frame[] = [];
+    let z = topZ(this.collectionId);
     for (const [id, b] of this.live) {
       const p = this.placements.get(id);
-      if (p) ps.push({ ...p, x: b.x, y: b.y, w: b.w, h: b.h });
+      if (p) {
+        const next: Placement = { ...p, x: b.x, y: b.y, w: b.w, h: b.h };
+        if (reparent?.ids.has(id) && (this.inFrame(p) ? p.frameId : null) !== reparent.frameId) {
+          next.frameId = reparent.frameId;
+          next.z = ++z;
+        }
+        ps.push(next);
+      }
       const n = this.notes.get(id);
       if (n) ns.push({ ...n, x: b.x, y: b.y, w: b.w, h: resized ? (b.h > this.textHeight(id) + 0.5 ? b.h : null) : n.h });
+      const f = this.frames.get(id);
+      if (f) fs.push({ ...f, x: b.x, y: b.y, w: b.w, h: b.h });
     }
     this.live.clear();
-    savePlacements(this.collectionId, ps, ns);
+    savePlacements(this.collectionId, ps, ns, fs);
     // The gesture set min-heights itself, and React won't clear a style its
     // props never changed.
     if (resized) {
@@ -813,7 +988,8 @@ export class BoardController {
   private onDoubleClick = (e: MouseEvent) => {
     // Double-clicks inside a note being edited select words. The comment
     // tool's clicks each drop a pin.
-    if ((e.target as HTMLElement).isContentEditable || this.tool === 'comment' || commentIdOf(e.target)) return;
+    // Quick clicks on a checkbox tick it twice rather than edit the box.
+    if ((e.target as HTMLElement).isContentEditable || this.tool === 'comment' || commentIdOf(e.target) || checkboxAt(e)) return;
     const p = this.local(e);
     // A press on a note captures the pointer, which retargets the dblclick
     // to the host, so find the note by position too.
@@ -841,6 +1017,26 @@ export class BoardController {
     this.cb.onEditNote(n.id);
   }
 
+  // Adds a frame, taking in the loose clips wholly inside it, and selects it.
+  private addFrameBox(r: Rect): void {
+    const inside = [...this.placements.values()].filter((p) => !this.inFrame(p) && encloses(r, p)).map((p) => p.id);
+    const f = addFrame(this.collectionId, r, inside);
+    setSelection([f.id]);
+  }
+
+  // Adds a default-size frame centred on a client point.
+  placeFrameAtClient(clientX: number, clientY: number): void {
+    const p = this.local({ clientX, clientY });
+    const [wx, wy] = this.camera.toWorld(p.x, p.y);
+    this.addFrameBox({ x: wx - NEW_FRAME.w / 2, y: wy - NEW_FRAME.h / 2, ...NEW_FRAME });
+  }
+
+  // A note's box changed size as its text reflowed (typing, formatting);
+  // its outline and handles follow.
+  noteResized(): void {
+    if (!this.gesture) this.pushOverlay();
+  }
+
   editNote(id: string): void {
     setSelection([id]);
     this.cb.onEditNote(id);
@@ -857,7 +1053,7 @@ export class BoardController {
     e.preventDefault();
     if (this.readonly) return;
     const p = this.local(e);
-    const id = noteIdOf(e.target) ?? this.hitTest(p.x, p.y)?.id ?? null;
+    const id = noteIdOf(e.target) ?? this.hitAt(p.x, p.y)?.id ?? null;
     if (id && !this.selection.has(id)) setSelection([id]);
     this.cb.onContextMenu(e.clientX, e.clientY, id);
   };
@@ -867,8 +1063,9 @@ export class BoardController {
       this.setHover(null);
       return;
     }
-    const hit = this.hitTest(this.pointer.x, this.pointer.y);
-    this.setHover(hit?.id ?? null);
+    const top = this.hitAt(this.pointer.x, this.pointer.y);
+    this.setHover(top?.id ?? null);
+    const hit = top && !top.frame ? this.placements.get(top.id)! : null;
     const corner = this.handleAt(this.pointer.x, this.pointer.y);
     this.host.dataset.handle = corner < 0 ? '' : String(corner % 2);
     if (hit && useStore.getState().scrubOnHover) {
@@ -891,7 +1088,7 @@ export class BoardController {
     if (t instanceof HTMLButtonElement && (e.key === 'Enter' || e.key === ' ')) return;
     const meta = e.metaKey || e.ctrlKey;
     const key = e.key.toLowerCase();
-    if (this.readonly && (meta || ['delete', 'backspace', 'n', 't', 'i', 'o', '`'].includes(key))) return;
+    if (this.readonly && (meta || ['delete', 'backspace', 'n', 't', 'r', 'i', 'o', '`'].includes(key))) return;
     if (this.readonly && key.startsWith('arrow')) {
       const step = e.shiftKey ? 400 : 100;
       this.camera.panBy(key === 'arrowleft' ? step : key === 'arrowright' ? -step : 0, key === 'arrowup' ? step : key === 'arrowdown' ? -step : 0);
@@ -903,7 +1100,7 @@ export class BoardController {
       if (e.shiftKey) redo(this.collectionId);
       else undo(this.collectionId);
     } else if (meta && key === 'y') redo(this.collectionId);
-    else if (meta && key === 'a') setSelection([...this.placements.keys(), ...this.notes.keys()]);
+    else if (meta && key === 'a') setSelection([...this.placements.keys(), ...this.notes.keys(), ...this.frames.keys()]);
     else if (meta && (key === 'b' || key === 'i' || key === 'u')) {
       const ids = [...this.selection].filter((id) => this.notes.has(id));
       if (!ids.length) return;
@@ -912,7 +1109,7 @@ export class BoardController {
     else if (key === 'delete' || key === 'backspace') this.deleteSelection();
     else if (key === 'enter' && this.selection.size === 1 && this.notes.has([...this.selection][0])) this.editNote([...this.selection][0]);
     else if (key === 'escape') {
-      if (this.tool === 'comment') this.setTool('select');
+      if (this.tool === 'comment' || this.tool === 'frame') this.setTool('select');
       else if (this.focusId) this.exitFocus();
       else setSelection([]);
     } else if (key === 'c' && this.cb.onComment) this.setTool(this.tool === 'comment' ? 'select' : 'comment');
@@ -932,6 +1129,7 @@ export class BoardController {
     else if (key === 'v') this.setTool('select');
     else if (key === 'h') this.setTool('hand');
     else if (key === 'n' || key === 't') this.setTool('note');
+    else if (key === 'r') this.setTool(this.tool === 'frame' ? 'select' : 'frame');
     else if (key === '`') updatePrefs({ hud: !useStore.getState().hud });
     else if (key === 'i' && this.focusId) this.setRangeAtPlayhead('in');
     else if (key === 'o' && this.focusId) this.setRangeAtPlayhead('out');
@@ -949,15 +1147,21 @@ export class BoardController {
   }
 
   nudge(dx: number, dy: number): void {
-    const ps: Placement[] = [];
+    const ps = new Map<string, Placement>();
     const ns: Note[] = [];
+    const fs: Frame[] = [];
     for (const id of this.selection) {
       const p = this.placements.get(id);
-      if (p) ps.push({ ...p, x: p.x + dx, y: p.y + dy });
+      if (p) ps.set(id, { ...p, x: p.x + dx, y: p.y + dy });
       const n = this.notes.get(id);
       if (n) ns.push({ ...n, x: n.x + dx, y: n.y + dy });
+      const f = this.frames.get(id);
+      if (f) {
+        fs.push({ ...f, x: f.x + dx, y: f.y + dy });
+        for (const c of this.children.get(id)!) ps.set(c.id, { ...c, x: c.x + dx, y: c.y + dy });
+      }
     }
-    savePlacements(this.collectionId, ps, ns);
+    savePlacements(this.collectionId, [...ps.values()], ns, fs);
   }
 
   arrangeSelection(mode: 'grid' | 'row'): void {
@@ -967,6 +1171,7 @@ export class BoardController {
     savePlacements(this.collectionId, ps.map((p, i) => ({ ...p, ...next[i] })));
   }
 
+  // Restacking a frame moves it among the frames; a clip in a frame stays in it.
   bringToFront(): void {
     let z = topZ(this.collectionId);
     const ps = [...this.selection]
@@ -974,7 +1179,11 @@ export class BoardController {
       .filter((p): p is Placement => !!p)
       .sort((a, b) => a.z - b.z)
       .map((p) => ({ ...p, z: ++z }));
-    savePlacements(this.collectionId, ps);
+    let fz = topFrameZ(this.collectionId);
+    const fs = this.selectedFrames()
+      .sort((a, b) => a.z - b.z)
+      .map((f) => ({ ...f, z: ++fz }));
+    savePlacements(this.collectionId, ps, [], fs);
   }
 
   sendToBack(): void {
@@ -984,7 +1193,40 @@ export class BoardController {
       .filter((p): p is Placement => !!p)
       .sort((a, b) => b.z - a.z)
       .map((p) => ({ ...p, z: --z }));
+    let fz = Math.min(0, ...[...this.frames.values()].map((f) => f.z));
+    const fs = this.selectedFrames()
+      .sort((a, b) => b.z - a.z)
+      .map((f) => ({ ...f, z: --fz }));
+    savePlacements(this.collectionId, ps, [], fs);
+  }
+
+  // Takes clips out of their frames, onto the board above everything.
+  takeOutOfFrames(ids: string[]): void {
+    let z = topZ(this.collectionId);
+    const ps = ids
+      .map((id) => this.placements.get(id))
+      .filter((p): p is Placement => !!p && this.inFrame(p))
+      .map((p) => ({ ...p, frameId: null, z: ++z }));
     savePlacements(this.collectionId, ps);
+  }
+
+  private selectedFrames(): Frame[] {
+    return [...this.selection].map((id) => this.frames.get(id)).filter((f): f is Frame => !!f);
+  }
+
+  frameById(id: string): Frame | undefined {
+    return this.frames.get(id);
+  }
+
+  // The frame a clip is in.
+  frameOf(placementId: string): Frame | undefined {
+    const p = this.placements.get(placementId);
+    return p?.frameId ? this.frames.get(p.frameId) : undefined;
+  }
+
+  // How many clips a frame holds.
+  clipsIn(frameId: string): number {
+    return this.children.get(frameId)?.length ?? 0;
   }
 
   // Animates freshly added clips in from where they were dropped, selects
@@ -1153,6 +1395,19 @@ function corners(b: Rect): [number, number][] {
     [b.x + b.w, b.y + b.h],
     [b.x, b.y + b.h],
   ];
+}
+
+function contains(b: Rect, x: number, y: number): boolean {
+  return x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h;
+}
+
+function encloses(outer: Rect, inner: Rect): boolean {
+  return inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.w <= outer.x + outer.w && inner.y + inner.h <= outer.y + outer.h;
+}
+
+// The box a drag from (x0, y0) to (x1, y1) spans.
+function normalize(g: { x0: number; y0: number; x1: number; y1: number }): Rect {
+  return { x: Math.min(g.x0, g.x1), y: Math.min(g.y0, g.y1), w: Math.abs(g.x1 - g.x0), h: Math.abs(g.y1 - g.y0) };
 }
 
 function intersects(a: Rect, b: Rect): boolean {

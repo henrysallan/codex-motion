@@ -1,7 +1,7 @@
-// WGSL for the four passes of a view: background, L0 tiles (one instanced
-// draw from the sprite atlas), video tiles (one draw per decoded frame, over
-// the L0 tile with crossfade alpha) and overlay rects (selection, handles,
-// marquee). Rects arrive already in device pixels, transformed on the CPU in
+// WGSL for the five passes of a view: background, backdrops (board frames,
+// the overlay shader writing depth), L0 tiles (one instanced draw from the
+// sprite atlas), video tiles (one draw per decoded frame, over the L0 tile
+// with crossfade alpha) and overlay rects (selection, handles, marquee). Rects arrive already in device pixels, transformed on the CPU in
 // double precision, so far-out world coordinates never jitter.
 //
 // Both tile shaders filter by footprint: when a tile is drawn smaller than
@@ -43,6 +43,14 @@ fn tileCoverage(local: vec2f, size: vec2f) -> f32 {
   let r = min(G.radius, 0.5 * min(size.x, size.y));
   return clamp(0.5 - sdRoundRect(local - 0.5 * size, 0.5 * size, r), 0.0, 1.0);
 }
+
+// Antialiased coverage of a pixel by a tile's clip rect (device px, x, y, w,
+// h; a negative width: no clip) with corners of radius r.
+fn clipCoverage(pos: vec2f, clip: vec4f, r: f32) -> f32 {
+  if (clip.z < 0.0) { return 1.0; }
+  let half = 0.5 * clip.zw;
+  return clamp(0.5 - sdRoundRect(pos - clip.xy - half, half, min(r, min(half.x, half.y))), 0.0, 1.0);
+}
 `;
 
 export const backgroundShader = /* wgsl */ `
@@ -78,7 +86,8 @@ struct Tile {
   layer: f32,     // atlas layer; negative while the sprite is loading
   depth: f32,
   dim: f32,
-  pad: f32,
+  clipRadius: f32,
+  clip: vec4f,    // device px; see clipCoverage
 };
 @group(0) @binding(1) var<storage, read> tiles: array<Tile>;
 @group(0) @binding(2) var atlas: texture_2d_array<f32>;
@@ -92,7 +101,8 @@ struct VOut {
   @location(3) @interpolate(flat) size: vec2f,
   // Atlas texels per device pixel along x and y.
   @location(4) @interpolate(flat) footprint: vec2f,
-  @location(5) @interpolate(flat) misc: vec2f, // layer, dim
+  @location(5) @interpolate(flat) misc: vec3f, // layer, dim, clip radius
+  @location(6) @interpolate(flat) clip: vec4f,
 };
 
 @vertex fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut {
@@ -106,12 +116,13 @@ struct VOut {
   out.size = t.rect.zw;
   let texels = (t.uv.zw - t.uv.xy) * vec2f(textureDimensions(atlas));
   out.footprint = texels / max(t.rect.zw, vec2f(1.0));
-  out.misc = vec2f(t.layer, t.dim);
+  out.misc = vec3f(t.layer, t.dim, t.clipRadius);
+  out.clip = t.clip;
   return out;
 }
 
 @fragment fn fs(v: VOut) -> @location(0) vec4f {
-  let coverage = tileCoverage(v.local, v.size);
+  let coverage = tileCoverage(v.local, v.size) * clipCoverage(v.pos.xy, v.clip, v.misc.z);
   if (coverage <= 0.0) { discard; }
   var color = G.placeholder.rgb;
   let layer = i32(v.misc.x);
@@ -139,8 +150,9 @@ ${common}
 struct VideoTile {
   rect: vec4f,    // x, y, w, h in device px
   frame: vec4f,   // frame width, frame height, alpha, depth
-  misc: vec4f,    // dim
+  misc: vec4f,    // dim, clip radius
   crop: vec4f,    // u0, v0, u1, v1 of the frame to show
+  clip: vec4f,    // device px; see clipCoverage
 };
 @group(1) @binding(0) var<uniform> V: VideoTile;
 @group(1) @binding(1) var frame: texture_external;
@@ -172,7 +184,7 @@ struct VOut {
     }
   }
   let color = mix(G.background.rgb, acc / (n.x * n.y), V.misc.x);
-  return vec4f(color, V.frame.z * tileCoverage(v.local, V.rect.zw));
+  return vec4f(color, V.frame.z * tileCoverage(v.local, V.rect.zw) * clipCoverage(v.pos.xy, V.clip, V.misc.y));
 }
 `;
 
@@ -183,7 +195,7 @@ struct Rect {
   rect: vec4f,     // x, y, w, h in device px
   fill: vec4f,     // straight alpha
   stroke: vec4f,
-  params: vec4f,   // stroke width, radius (device px)
+  params: vec4f,   // stroke width, radius (device px), depth (backdrops)
 };
 @group(0) @binding(1) var<storage, read> rects: array<Rect>;
 
@@ -200,7 +212,7 @@ struct VOut {
   let c = corner(vi);
   let p = r.rect.xy - pad + c * (r.rect.zw + 2.0 * pad);
   var out: VOut;
-  out.pos = toClip(p, 0.0);
+  out.pos = toClip(p, r.params.z);
   out.p = p;
   out.index = ii;
   return out;
@@ -214,7 +226,10 @@ struct VOut {
   let fillA = r.fill.a * clamp(0.5 - d, 0.0, 1.0);
   let sw = r.params.x;
   let strokeA = select(0.0, r.stroke.a * clamp(0.5 - (abs(d) - 0.5 * sw), 0.0, 1.0), sw > 0.0);
+  let a = strokeA + fillA * (1.0 - strokeA);
+  // Backdrops write depth, which mustn't cover what's under their corners.
+  if (a <= 0.0) { discard; }
   let rgb = r.stroke.rgb * strokeA + r.fill.rgb * fillA * (1.0 - strokeA);
-  return vec4f(rgb, strokeA + fillA * (1.0 - strokeA));
+  return vec4f(rgb, a);
 }
 `;

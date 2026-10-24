@@ -89,7 +89,8 @@ export interface MenuItem {
   onSelect?: () => void;
 }
 
-export type MenuEntry = MenuItem | 'separator' | { title: string };
+// `content` is a custom row (a swatch picker); it stays open when used.
+export type MenuEntry = MenuItem | 'separator' | { title: string } | { content: ReactNode };
 
 export function Menu({ anchor, items, onClose, align, width }: { anchor: Anchor; items: MenuEntry[]; onClose: () => void; align?: 'start' | 'end'; width?: number }) {
   return (
@@ -98,6 +99,7 @@ export function Menu({ anchor, items, onClose, align, width }: { anchor: Anchor;
         {items.map((item, i) => {
           if (item === 'separator') return <div key={i} className="menu-sep" />;
           if ('title' in item) return <div key={i} className="menu-title">{item.title}</div>;
+          if ('content' in item) return <div key={i}>{item.content}</div>;
           return (
             <button
               key={i}

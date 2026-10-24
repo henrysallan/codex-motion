@@ -136,7 +136,10 @@ async function settle(item: ScrapedItem, got: Got, dir: string): Promise<void> {
   if (got.info) applyEmbedInfo(item, got.info);
 }
 
-async function downloadFile(url: string, referer: string, tmp: string, maxBytes: number): Promise<Got> {
+// One at a time when it's a Vimeo link, so the pacer sees the whole download.
+const downloadFile = (url: string, referer: string, tmp: string, maxBytes: number): Promise<Got> => paced(url, () => fetchFile(url, referer, tmp, maxBytes));
+
+async function fetchFile(url: string, referer: string, tmp: string, maxBytes: number): Promise<Got> {
   const gif = /\.gif$/i.test(new URL(url).pathname);
   const res = await fetch(url, {
     // For a GIF, no image/webp or avif: an image CDN would re-encode it.
@@ -146,7 +149,7 @@ async function downloadFile(url: string, referer: string, tmp: string, maxBytes:
   });
   if (!res.ok || !res.body) {
     await res.body?.cancel();
-    throw new Error(`HTTP ${res.status}`);
+    throw httpError(url, res.status);
   }
   const contentType = res.headers.get('content-type') ?? '';
   if (/^text\/|json|xml/i.test(contentType) || (/^image\//i.test(contentType) && !/^image\/gif/i.test(contentType))) {
@@ -198,8 +201,10 @@ function run(cmd: string, args: string[], timeoutMs: number): Promise<{ code: nu
   });
 }
 
+const VIMEO_REFUSED = /blocked due to its TLS fingerprint|HTTP Error 429/;
+
 const lastError = (stderr: string) =>
-  /blocked due to its TLS fingerprint/.test(stderr) ? 'Vimeo is refusing automated requests from this machine for now (bot protection); retry later' :
+  VIMEO_REFUSED.test(stderr) ? 'Vimeo is refusing automated requests from this machine for now (bot protection); retry later' :
   stderr
     .split('\n')
     .filter((l) => /ERROR/.test(l))
@@ -211,22 +216,75 @@ function ytdlpArgs(referer: string): string[] {
   return ['--no-playlist', '--no-colors', '--referer', referer, '--add-headers', `User-Agent:${USER_AGENT}`];
 }
 
-// Players and HLS/DASH: best video plus best audio, merged by ffmpeg.
-// One Vimeo request at a time, a couple of seconds apart: Vimeo blocks
-// clients that hammer it (after a few thousand requests in a day it began
-// refusing this tool's TLS fingerprint outright, which we don't work around).
-const VIMEO_GAP_MS = 2000;
-let vimeoTurn = Promise.resolve();
-function paced<T>(url: string, task: () => Promise<T>): Promise<T> {
-  if (!/(^|\.)vimeo\.com$/.test(new URL(url).hostname)) return task();
-  const run = vimeoTurn.then(task);
-  vimeoTurn = run.then(
-    () => new Promise((r) => setTimeout(r, VIMEO_GAP_MS)),
-    () => new Promise((r) => setTimeout(r, VIMEO_GAP_MS)),
-  );
-  return run;
+// A response that means Vimeo is refusing this machine, not this video.
+export class Refused extends Error {}
+
+export const HELD_BACK = 'Vimeo refused several requests in a row (bot protection), so this run left the rest of its videos alone; re-run later to retry';
+
+// Every Vimeo request (players, progressive files, dry-run checks) goes
+// through one queue: one at a time, several seconds apart. Vimeo blocks
+// clients that hammer it: after a few thousand requests in a day it refused
+// this machine outright for some hours. We don't work around that. After a
+// few refusals in a row the pacer stops sending, and the rest of the run's
+// Vimeo work fails at once and stays queued for a re-run.
+export function pacer(opts: { gapMs: number; jitterMs: number; tripAfter: number; onTrip?: () => void }) {
+  let turn: Promise<unknown> = Promise.resolve();
+  let strikes = 0;
+  let tripped = false;
+  const gap = () => (tripped ? undefined : new Promise((r) => setTimeout(r, opts.gapMs + Math.random() * opts.jitterMs)));
+  return {
+    get tripped() {
+      return tripped;
+    },
+    run<T>(task: () => Promise<T>): Promise<T> {
+      const run = turn.then(async () => {
+        if (tripped) throw new Error(HELD_BACK);
+        try {
+          const out = await task();
+          strikes = 0;
+          return out;
+        } catch (e) {
+          if (!(e instanceof Refused)) strikes = 0;
+          else if (++strikes >= opts.tripAfter && !tripped) {
+            tripped = true;
+            opts.onTrip?.();
+          }
+          throw e;
+        }
+      });
+      turn = run.then(gap, gap);
+      return run;
+    },
+  };
 }
 
+const vimeo = pacer({
+  gapMs: 5000,
+  jitterMs: 3000,
+  tripAfter: 3,
+  onTrip: () => {
+    if (process.stdout.isTTY) process.stdout.write('\r\x1b[K');
+    console.log('  Vimeo is refusing requests from this machine; leaving its remaining videos for a later run');
+  },
+});
+
+const isVimeo = (url: string) => /(^|\.)vimeo\.com$/.test(new URL(url).hostname);
+const paced = <T>(url: string, task: () => Promise<T>): Promise<T> => (isVimeo(url) ? vimeo.run(task) : task());
+
+// HTTP refusals from Vimeo's file links count against the pacer.
+function httpError(url: string, status: number): Error {
+  return isVimeo(url) && (status === 403 || status === 429) ? new Refused(`HTTP ${status}`) : new Error(`HTTP ${status}`);
+}
+
+// yt-dlp, with Vimeo's refusals surfaced to the pacer.
+const ytdlpRun = (url: string, args: string[], timeoutMs: number) =>
+  paced(url, async () => {
+    const r = await run(YTDLP, args, timeoutMs);
+    if (r.code !== 0 && VIMEO_REFUSED.test(r.stderr)) throw new Refused(lastError(r.stderr));
+    return r;
+  });
+
+// Players and HLS/DASH: best video plus best audio, merged by ffmpeg.
 async function ytdlp(url: string, referer: string, tmp: string, opts: DownloadOptions): Promise<Got> {
   const args = [
     ...ytdlpArgs(referer),
@@ -245,7 +303,7 @@ async function ytdlp(url: string, referer: string, tmp: string, opts: DownloadOp
     ...(process.env.FFMPEG ? ['--ffmpeg-location', process.env.FFMPEG] : []),
     url,
   ];
-  const r = await paced(url, () => run(YTDLP, args, 30 * 60_000));
+  const r = await ytdlpRun(url, args, 30 * 60_000);
   const infoPath = path.join(tmp, 'media.info.json');
   const info = fs.existsSync(infoPath) ? (JSON.parse(fs.readFileSync(infoPath, 'utf8')) as Record<string, unknown>) : undefined;
   const file = fs.readdirSync(tmp).find((f) => f.startsWith('media.') && !/\.(json|part|ytdl)$/.test(f) && !/\.f[\w-]+\.\w+$/.test(f));
@@ -261,15 +319,18 @@ async function ytdlp(url: string, referer: string, tmp: string, opts: DownloadOp
 // Dry run: confirm the URL resolves and record what it would give us.
 async function check(item: ScrapedItem, url: string, kind: string, referer: string): Promise<void> {
   if (kind === 'file') {
-    const res = await fetch(url, { method: 'HEAD', headers: { 'user-agent': USER_AGENT, referer }, redirect: 'follow', signal: AbortSignal.timeout(20_000) });
-    if (!res.ok && res.status !== 405) throw new Error(`HTTP ${res.status}`);
+    const res = await paced(url, async () => {
+      const res = await fetch(url, { method: 'HEAD', headers: { 'user-agent': USER_AGENT, referer }, redirect: 'follow', signal: AbortSignal.timeout(20_000) });
+      if (!res.ok && res.status !== 405) throw httpError(url, res.status);
+      return res;
+    });
     const type = res.headers.get('content-type') ?? '';
     if (/text\/html/i.test(type)) throw new Error(`not a video (${type})`);
     const bytes = Number(res.headers.get('content-length') ?? 0);
     Object.assign(item.media, { ...(type ? { contentType: type } : {}), ...(bytes ? { bytes } : {}), ...(res.headers.get('last-modified') ? { lastModified: res.headers.get('last-modified')! } : {}) });
     return;
   }
-  const r = await paced(url, () => run(YTDLP, [...ytdlpArgs(referer), '--skip-download', '--dump-single-json', '--no-warnings', url], 120_000));
+  const r = await ytdlpRun(url, [...ytdlpArgs(referer), '--skip-download', '--dump-single-json', '--no-warnings', url], 120_000);
   if (r.code !== 0) throw new Error(lastError(r.stderr) ?? `yt-dlp exited ${r.code}`);
   const info = JSON.parse(r.stdout) as Record<string, unknown>;
   applyEmbedInfo(item, info);

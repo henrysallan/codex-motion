@@ -48,6 +48,17 @@ async function putFile(key: string, file: File, token: string): Promise<void> {
 
 const inFlight = new Set<string>();
 
+// The renditions an upload sends, smallest first.
+function uploadKeys(a: AssetRecord): { key: string; bytes: number }[] {
+  return [a.l0, a.l1, a.original, a.l2].flatMap((r) => (r?.url.startsWith('media/') ? [{ key: r.url, bytes: r.bytes }] : []));
+}
+
+// What an upload stores, all renditions together: what it counts against
+// the uploader's quota.
+export function uploadBytes(a: AssetRecord): number {
+  return uploadKeys(a).reduce((sum, r) => sum + r.bytes, 0);
+}
+
 // Uploads every rendition of an ingested asset. Resolves true once all of
 // them are in cloud storage.
 export async function uploadAsset(a: AssetRecord): Promise<boolean> {
@@ -56,13 +67,27 @@ export async function uploadAsset(a: AssetRecord): Promise<boolean> {
   if (!token) return false;
   inFlight.add(a.id);
   try {
-    const keys = [a.l0?.url, a.l1.url, a.original?.url, a.l2?.url].filter((k): k is string => !!k && k.startsWith('media/'));
-    for (const key of keys) await putFile(key, await opfsFile(key), token);
+    for (const { key } of uploadKeys(a)) await putFile(key, await opfsFile(key), token);
     return true;
   } catch (e) {
     console.warn(`upload of ${a.name} failed; will retry on next open:`, e);
     return false;
   } finally {
     inFlight.delete(a.id);
+  }
+}
+
+// Deletes every cloud file of an upload this user deleted. Resolves true
+// once they're gone.
+export async function deleteFiles(id: string): Promise<boolean> {
+  if (!remoteEnabled || !config.mediaUrl) return false;
+  const token = await accessToken();
+  if (!token) return false;
+  try {
+    await request(`${config.mediaUrl}/media/${id}/`, { method: 'DELETE' }, token);
+    return true;
+  } catch (e) {
+    console.warn(`couldn't delete the files of ${id}; will retry on next open:`, e);
+    return false;
   }
 }

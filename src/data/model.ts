@@ -17,6 +17,8 @@ export interface AssetRecord extends Asset {
   // Uploads: whether every rendition is in cloud storage yet. Until then
   // the cloud row says "processing", so other devices don't fetch them.
   uploaded?: boolean;
+  // Uploads: shared to everyone's Feed by the uploader. Off by default.
+  inFeed?: boolean;
 }
 
 export interface Point {
@@ -27,6 +29,8 @@ export interface Point {
 export interface Collection {
   id: string;
   name: string;
+  // The folder it's filed in; null: the top level.
+  folderId: string | null;
   // Null: the first placement stands in.
   coverAssetId: string | null;
   // Where the last batch of added items settled, in canvas coordinates.
@@ -36,6 +40,18 @@ export interface Collection {
   // Published read-only at /c/<slug>.
   isPublic: boolean;
   slug: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+// Folders file collections in the Collections pane, and nest. They're the
+// owner's own filing: a published collection never shows its folder.
+export interface Folder {
+  id: string;
+  name: string;
+  // The folder it's in; null: the top level.
+  parentId: string | null;
+  createdBy: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -53,8 +69,26 @@ export interface Placement {
   // Source range in seconds; null plays the whole clip.
   inPoint: number | null;
   outPoint: number | null;
+  // The frame it's in; null or absent: loose on the board.
+  frameId?: string | null;
   addedBy: string;
   addedAt: number;
+}
+
+export const FRAME_COLORS = ['default', 'grey', 'red', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink'] as const;
+export type FrameColor = (typeof FRAME_COLORS)[number];
+
+// A coloured box on the board that holds clips: they show only inside it
+// and move with it. Frames stack among themselves, under everything else.
+export interface Frame {
+  id: string;
+  collectionId: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  color: FrameColor;
+  z: number;
 }
 
 export type TextSize = 'h1' | 'h2' | 'h3' | 'body';

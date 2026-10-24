@@ -4,7 +4,7 @@
 // the close button or a double-click on the video closes it.
 
 import { Check, ChevronLeft, ChevronRight, Crosshair, Pause, Play, Plus, X } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { AssetRecord } from '../../data/model.ts';
 import { mediaUrl } from '../../data/media.ts';
 import type { VideoRendition } from '../../media/library.ts';
@@ -14,6 +14,8 @@ import { AddToPopover } from '../feed/FeedPane.tsx';
 import { clock } from '../format.ts';
 import { isTyping, spaceTap } from '../keys.ts';
 import { useStore } from '../store.ts';
+import { CommentMarkers } from './ClipComments.tsx';
+import { type Playhead, useWatchClipComments, videoPlayhead } from './comments.ts';
 import { InfoPanel, InfoToggle } from './InfoPanel.tsx';
 import { closeDetail, stepDetail, useDetail } from './state.ts';
 
@@ -38,6 +40,8 @@ function Detail({ asset, index, count }: { asset: AssetRecord; index: number; co
   const frame = useRef<HTMLDivElement>(null);
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
+  const player = useMemo(() => (video ? videoPlayhead(video) : undefined), [video]);
+  useWatchClipComments(asset.id);
 
   useEffect(() => root.current?.focus({ preventScroll: true }), []);
 
@@ -141,16 +145,29 @@ function Detail({ asset, index, count }: { asset: AssetRecord; index: number; co
             onDoubleClick={closeDetail}
           />
         </div>
-        {video && <VideoBar video={video} asset={asset} rendition={r} infoPanel={infoPanel} />}
+        {video && player && <VideoBar video={video} player={player} asset={asset} rendition={r} infoPanel={infoPanel} />}
       </div>
-      {infoPanel && <DetailInfo asset={asset} />}
+      {infoPanel && <DetailInfo asset={asset} player={player} />}
     </div>
   );
 }
 
-// Play/pause, frame step, a scrubbable timeline, speed, quality, and the
-// info panel toggle. The playhead moves every frame, through refs.
-function VideoBar({ video, asset, rendition, infoPanel }: { video: HTMLVideoElement; asset: AssetRecord; rendition: VideoRendition; infoPanel: boolean }) {
+// Play/pause, frame step, a scrubbable timeline with comment markers, speed,
+// quality, and the info panel toggle. The playhead moves every frame,
+// through refs.
+function VideoBar({
+  video,
+  player,
+  asset,
+  rendition,
+  infoPanel,
+}: {
+  video: HTMLVideoElement;
+  player: Playhead;
+  asset: AssetRecord;
+  rendition: VideoRendition;
+  infoPanel: boolean;
+}) {
   const [playing, setPlaying] = useState(!video.paused);
   const [speed, setSpeed] = useState(video.playbackRate);
   const track = useRef<HTMLDivElement>(null);
@@ -220,6 +237,7 @@ function VideoBar({ video, asset, rendition, infoPanel }: { video: HTMLVideoElem
         {clock(0, fps)}
       </span>
       <div className="timeline" ref={track} onPointerDown={scrub}>
+        <CommentMarkers asset={asset} player={player} />
         <div className="timeline-head" ref={head} />
       </div>
       <span className="focus-duration">{clock(duration, fps)}</span>
@@ -239,7 +257,7 @@ function VideoBar({ video, asset, rendition, infoPanel }: { video: HTMLVideoElem
 }
 
 // The info panel with "Add to" for the Feed.
-function DetailInfo({ asset }: { asset: AssetRecord }) {
+function DetailInfo({ asset, player }: { asset: AssetRecord; player?: Playhead }) {
   const target = useStore((s) => (s.user.activeTargetId ? s.collections[s.user.activeTargetId] : null));
   const readonly = useStore((s) => s.mode === 'public');
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
@@ -261,7 +279,7 @@ function DetailInfo({ asset }: { asset: AssetRecord }) {
 
   return (
     <>
-      <InfoPanel asset={asset} actions={actions} />
+      <InfoPanel asset={asset} actions={actions} player={player} />
       {anchor && (
         <AddToPopover
           anchor={anchor}

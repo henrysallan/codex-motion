@@ -29,6 +29,31 @@ export interface ViewItem {
   // Region of the source frame to show, normalised [u0, v0, u1, v1];
   // collection covers crop to fill their box.
   crop?: [number, number, number, number];
+  // Shows only the part inside this rect (world units), its corners rounded
+  // by `radius` CSS px: the board frame the clip sits in.
+  clip?: ClipRect;
+}
+
+export interface ClipRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  radius: number;
+}
+
+// A filled rect drawn under the clips, stacked with them by z (a board
+// frame). World units; stroke width and radius in CSS px.
+export interface ViewBackdrop {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  z: number;
+  fill: RGBA;
+  stroke: RGBA;
+  strokeWidth: number;
+  radius: number;
 }
 
 // How a view keeps sprites resident. A board keeps every clip's L0 sprite
@@ -115,6 +140,7 @@ export type ToWorker =
   | { type: 'view:resize'; id: number; width: number; height: number; dpr: number }
   | { type: 'view:style'; id: number; style: ViewStyle }
   | { type: 'view:items'; id: number; items: ViewItem[] }
+  | { type: 'view:backdrops'; id: number; backdrops: ViewBackdrop[] }
   | { type: 'view:camera'; id: number; camera: CameraState }
   | { type: 'view:overlay'; id: number; rects: OverlayRect[] }
   // Hover scrub: every placement of the asset follows `fraction` of its range.
@@ -191,5 +217,7 @@ export type FromWorker =
   | { type: 'error'; message: string }
   | { type: 'stats'; stats: EngineStats }
   | { type: 'record'; frames: FrameRecord[] }
-  // Focus clock, every frame while focused: source time and range in seconds.
-  | { type: 'focusTime'; time: number; inPoint: number; outPoint: number };
+  // Focus clock, every frame while focused: source time and range in
+  // seconds, the tier on screen and the tier on its way (0 sprite, 1 L1,
+  // 2 L2, 3 original).
+  | { type: 'focusTime'; time: number; inPoint: number; outPoint: number; tier: number; target: number };

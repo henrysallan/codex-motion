@@ -55,6 +55,36 @@
   cursor: text;
 }
 
+.board-host[data-tool='frame'] {
+  cursor: crosshair;
+}
+
+/* Frame colours in the board's context menu. */
+.frame-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 2px 8px 6px;
+}
+
+.frame-swatch {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  color: var(--text);
+}
+
+.frame-swatch:hover {
+  box-shadow: 0 0 0 2px var(--surface-hover);
+}
+
+.frame-swatch[aria-pressed='true'] {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
 /* Handles overhang notes, so the cursor shows over them too. */
 .board-host[data-handle='0'],
 .board-host[data-handle='0'] .note:not(.editing) {
@@ -144,11 +174,12 @@
   font-style: italic;
 }
 
-.note.underline .note-text:not(:empty) {
+.note.underline .note-text:not([data-empty]) {
   text-decoration: underline;
 }
 
 .note-text {
+  position: relative;
   min-height: 1lh;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -160,9 +191,47 @@
   user-select: text;
 }
 
-.note-text:empty::before {
+.note-text[data-empty]::before {
   content: attr(data-placeholder);
+  position: absolute;
+  inset: 0 auto auto 0;
   color: var(--text-3);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Checklist items: the box sits in the line's left padding, drawn here so
+   the line's content stays plain text (see lines.ts). */
+.note-text > [data-check] {
+  position: relative;
+  padding-left: 1.45em;
+}
+
+.note-text > [data-check]::before {
+  content: '';
+  position: absolute;
+  left: 0.1em;
+  top: calc((1lh - 0.95em) / 2);
+  box-sizing: border-box;
+  width: 0.95em;
+  height: 0.95em;
+  border: max(1px, 0.09em) solid var(--text-3);
+  border-radius: 0.22em;
+  cursor: pointer;
+}
+
+.note-text > [data-check='1']::before {
+  border-color: var(--accent);
+  background: var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 85% no-repeat;
+}
+
+.note-text > [data-check='1'] {
+  color: var(--text-3);
+  text-decoration-line: line-through;
+}
+
+.slash-menu {
+  min-width: 180px;
 }
 
 .board-head {

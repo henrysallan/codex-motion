@@ -1,17 +1,23 @@
 // What we know about a clip: the project it came from (as the site
 // described it), what the tagger saw in it, and the file itself. Shown
 // beside the Feed's details player and beside a clip in canvas focus mode.
-// Clients, studios and tags are links into a Feed search.
+// Clients, studios and tags are links into a Feed search. With Supabase on,
+// a pill at the top switches to the clip's comments.
 
 import { ArrowUpRight, PanelRight, ScanSearch, Sparkles } from 'lucide-react';
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useMemo, useState } from 'react';
+import { remoteEnabled } from '../../config.ts';
 import type { AssetRecord } from '../../data/model.ts';
 import { tagLabel, VOCABULARY } from '../../media/vocabulary.ts';
 import { type FacetKey, splitStudios, VOCAB_FACETS } from '../../search/taxonomy.ts';
-import { Button, IconButton } from '../../ui/controls.tsx';
+import { Button, IconButton, Segmented } from '../../ui/controls.tsx';
 import { searchFeed, useStore } from '../store.ts';
+import { AssetNotes } from './AssetNotes.tsx';
+import { ClipComments } from './ClipComments.tsx';
+import { commentsOf, type Playhead, useClipComments } from './comments.ts';
 import { useAssetMeta } from './meta.ts';
-import { closeDetail, setInfoPanel } from './state.ts';
+import { closeDetail, type InfoTab, setInfoPanel, setInfoTab, useDetail } from './state.ts';
+import { UploadEnrich } from './UploadEnrich.tsx';
 
 const TAG_GROUPS: { key: string; label: string }[] = [
   { key: 'technique', label: 'Technique' },
@@ -81,7 +87,45 @@ function definition(tag: string): string | undefined {
   return defs?.[tagLabel(tag)];
 }
 
-export function InfoPanel({ asset, actions }: { asset: AssetRecord; actions?: ReactNode }) {
+// `player` is the player beside the panel, which comments read and move.
+export function InfoPanel({ asset, actions, player }: { asset: AssetRecord; actions?: ReactNode; player?: Playhead }) {
+  const tab = useDetail((s) => s.infoTab);
+  const comments = remoteEnabled && tab === 'comments';
+  return (
+    <aside className="info-panel" aria-label="Clip details">
+      {remoteEnabled && <Tabs assetId={asset.id} tab={tab} />}
+      {comments ? <ClipComments asset={asset} player={player} /> : <Info asset={asset} actions={actions} />}
+    </aside>
+  );
+}
+
+function Tabs({ assetId, tab }: { assetId: string; tab: InfoTab }) {
+  const all = useClipComments((s) => s.comments);
+  const count = useMemo(() => commentsOf(assetId, all).length, [assetId, all]);
+  return (
+    <div className="info-tabs">
+      <Segmented
+        label="Panel"
+        value={tab}
+        onChange={setInfoTab}
+        options={[
+          { value: 'info', label: 'Info' },
+          {
+            value: 'comments',
+            label: (
+              <>
+                Comments
+                {count > 0 && <span className="info-tab-count">{count.toLocaleString()}</span>}
+              </>
+            ),
+          },
+        ]}
+      />
+    </div>
+  );
+}
+
+function Info({ asset, actions }: { asset: AssetRecord; actions?: ReactNode }) {
   const { source, analysis, loading } = useAssetMeta(asset);
   const pageUrl = safeUrl(source?.pageUrl ?? asset.sourceUrl);
   const site = source?.site ?? hostOf(pageUrl);
@@ -96,7 +140,7 @@ export function InfoPanel({ asset, actions }: { asset: AssetRecord; actions?: Re
   );
 
   return (
-    <aside className="info-panel" aria-label="Clip details">
+    <>
       <header className="info-head">
         {site && <div className="info-site">{site}</div>}
         <h2 className="info-title">{title}</h2>
@@ -121,6 +165,8 @@ export function InfoPanel({ asset, actions }: { asset: AssetRecord; actions?: Re
       </header>
 
       <div className="info-body">
+        <UploadEnrich asset={asset} />
+        <AssetNotes asset={asset} />
         {scraped && (
           <Section title="Project">
             {loading ? (
@@ -204,7 +250,7 @@ export function InfoPanel({ asset, actions }: { asset: AssetRecord; actions?: Re
           />
         </Section>
       </div>
-    </aside>
+    </>
   );
 }
 

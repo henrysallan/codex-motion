@@ -6,11 +6,13 @@
 import { Crosshair, LayoutGrid, LogOut, Monitor, Moon, Pause, Play, Sparkles, Sun, X } from 'lucide-react';
 import { useState } from 'react';
 import { remoteEnabled } from '../config.ts';
+import { type Quota, refreshQuota, useQuota } from '../data/quota.ts';
 import { signOut } from '../data/supabase.ts';
 import { useSyncStatus } from '../data/sync.ts';
 import { IconButton } from '../ui/controls.tsx';
 import { Menu, useMenu } from '../ui/popover.tsx';
 import { useComments } from './comments/state.ts';
+import { fileSize } from './format.ts';
 import {
   activateTab,
   closeTab,
@@ -193,14 +195,25 @@ function ThemeButton() {
   );
 }
 
+const uploads = (q: Quota) => `Uploads: ${fileSize(q.used)} ${q.limit === null ? '· no limit' : `of ${fileSize(q.limit)}`}`;
+
 function AccountButton({ name, color, avatarUrl }: { name: string; color: string; avatarUrl: string | null }) {
   const menu = useMenu();
   const sync = useSyncStatus();
+  const quota = useQuota((s) => s.quota);
   const state = sync.error ? 'error' : sync.pending ? 'pending' : 'ok';
   const label = state === 'error' ? `Not saved: ${sync.error}` : state === 'pending' ? 'Saving…' : 'All changes saved';
   return (
     <>
-      <button type="button" className="account" title={remoteEnabled ? `${name} · ${label}` : name} onClick={(e) => menu.toggle(e.currentTarget)}>
+      <button
+        type="button"
+        className="account"
+        title={remoteEnabled ? `${name} · ${label}` : name}
+        onClick={(e) => {
+          if (!menu.anchor) void refreshQuota();
+          menu.toggle(e.currentTarget);
+        }}
+      >
         {avatarUrl ? (
           <img className="avatar" src={avatarUrl} alt="" referrerPolicy="no-referrer" />
         ) : (
@@ -217,7 +230,7 @@ function AccountButton({ name, color, avatarUrl }: { name: string; color: string
           onClose={menu.close}
           items={[
             { title: name },
-            ...(remoteEnabled ? [{ label, disabled: true }, { label: 'Sign out', icon: <LogOut size={14} />, onSelect: () => void signOut().then(() => location.reload()) }] : [{ label: 'Local only (no account)', disabled: true }]),
+            ...(remoteEnabled ? [{ label, disabled: true }, ...(quota ? [{ label: uploads(quota), disabled: true }] : []), { label: 'Sign out', icon: <LogOut size={14} />, onSelect: () => void signOut().then(() => location.reload()) }] : [{ label: 'Local only (no account)', disabled: true }]),
           ]}
         />
       )}

@@ -1,0 +1,115 @@
+/* An upload's own controls in its details panel (UploadEnrich.tsx). */
+
+.enrich-form {
+  display: flex;
+  gap: 6px;
+}
+
+.enrich-url {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  outline: none;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+.enrich-url::placeholder {
+  color: var(--text-3);
+}
+
+.enrich-url:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.enrich-url:disabled {
+  color: var(--text-2);
+}
+
+.enrich-status {
+  margin: 6px 0 0;
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.enrich-status.error {
+  color: var(--red);
+}
+
+.enrich-feed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  margin-top: 10px;
+  cursor: pointer;
+}
+
+.enrich-feed input {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 26px;
+  height: 15px;
+  margin: 0;
+  border-radius: var(--pill);
+  background: var(--border-strong);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.enrich-feed input::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+  transition: transform 0.15s;
+}
+
+.enrich-feed input:checked {
+  background: var(--accent);
+}
+
+.enrich-feed input:checked::before {
+  transform: translateX(11px);
+}
+
+.enrich-feed input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.enrich-feed input:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.enrich-hint {
+  margin: 3px 0 0 34px;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.btn.ghost.enrich-delete {
+  margin-top: 12px;
+  margin-left: -10px;
+  color: var(--red);
+}
+
+.btn.ghost.enrich-delete:hover:not(:disabled) {
+  background: var(--red-soft);
+  color: var(--red);
+}

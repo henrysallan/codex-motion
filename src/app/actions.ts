@@ -7,11 +7,12 @@ import { addToCollection, openCollection, useStore } from './store.ts';
 import { toast } from './toasts.tsx';
 
 // Adds clips to a collection and tells its canvas to animate them in from
-// the drop point (or the collection's last drop point).
-export function addAssets(collectionId: string, assetIds: string[], at?: Point): void {
+// the drop point (or the collection's last drop point), into the frame
+// they were dropped on, if any.
+export function addAssets(collectionId: string, assetIds: string[], at?: Point, frameId?: string | null): void {
   const s = useStore.getState();
   const from = at ?? s.collections[collectionId]?.lastDrop ?? null;
-  const added = addToCollection(collectionId, assetIds, at);
+  const added = addToCollection(collectionId, assetIds, at, frameId);
   if (added.length === 0) return;
   emit('added', { collectionId, ids: added.map((p) => p.id), from });
   if (s.activeTab !== collectionId) {

@@ -7,6 +7,7 @@ import {
   ArrowUpToLine,
   Bold,
   Crosshair,
+  Frame as FrameIcon,
   Globe,
   Grid3x3,
   Hand,
@@ -23,15 +24,18 @@ import {
   Redo2,
   Rows3,
   ScanEye,
+  SquareDashedMousePointer,
   Sparkles,
+  SquareArrowOutUpRight,
   Trash2,
   Type,
   Underline,
   Undo2,
+  Ungroup,
   Upload,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Note, TextSize } from '../../data/model.ts';
+import { FRAME_COLORS, type FrameColor, type Note, type TextSize } from '../../data/model.ts';
 import type { CameraState } from '../../engine/protocol.ts';
 import { Button, EmptyState, IconButton } from '../../ui/controls.tsx';
 import { Menu, type MenuEntry } from '../../ui/popover.tsx';
@@ -42,18 +46,23 @@ import { ingestFiles } from '../ingest.ts';
 import {
   deleteItems,
   formatNotes,
+  framesOf,
   notesOf,
   redo,
+  removeFrames,
   renameCollection,
   setActiveTarget,
   setCover,
+  setFrameColor,
+  setSelection,
   toggleNoteFormat,
   togglePane,
   undo,
   updatePrefs,
   useStore,
 } from '../store.ts';
-import { useResolvedTheme } from '../theme.ts';
+import { frameColors, useResolvedTheme } from '../theme.ts';
+import { focusPlayhead } from '../detail/comments.ts';
 import { InfoPanel } from '../detail/InfoPanel.tsx';
 import { INFO_MAX, INFO_SHARE, useDetail } from '../detail/state.ts';
 import { BoardController, type Tool } from './BoardController.ts';
@@ -85,6 +94,7 @@ export function CanvasPane({ collectionId }: { collectionId: string }) {
     return n;
   });
   const noteCount = useStore((s) => notesOf(collectionId, s.notes).length);
+  const frameCount = useStore((s) => framesOf(collectionId, s.frames).length);
   const selection = useStore((s) => s.selection);
   const focus = useStore((s) => (s.focus?.collectionId === collectionId ? s.focus : null));
   const focusAsset = useStore((s) => {
@@ -148,15 +158,32 @@ export function CanvasPane({ collectionId }: { collectionId: string }) {
     const placement = menu.hit ? ctrl.placementById(menu.hit) : undefined;
     if (menu.hit) {
       const multi = selection.length > 1;
-      const notes = useStore.getState().notes;
+      const { notes, frames } = useStore.getState();
       const noteIds = selection.filter((id) => notes[id]);
+      const frameIds = selection.filter((id) => frames[id]);
+      const parent = placement && !multi ? ctrl.frameOf(placement.id) : undefined;
+      const inside = frameIds.reduce((n, id) => n + ctrl.clipsIn(id), 0);
       return [
         ...(noteIds.length ? textMenu(collectionId, noteIds.map((id) => notes[id]), () => ctrl.editNote(noteIds[0])) : []),
+        ...(frameIds.length
+          ? [
+              { content: <FrameSwatches collectionId={collectionId} ids={frameIds} /> },
+              'separator' as const,
+              { label: frameIds.length > 1 ? 'Remove frames, keep clips' : 'Remove frame, keep clips', icon: <Ungroup size={15} />, onSelect: () => removeFrames(collectionId, frameIds) },
+              'separator' as const,
+            ]
+          : []),
         ...(placement
           ? [
               { label: 'Focus', icon: <ScanEye size={15} />, trail: 'Double-click', onSelect: () => ctrl.enterFocus(placement.id) },
               { label: 'Find similar', icon: <Sparkles size={15} />, trail: 'M2', disabled: true },
               { label: 'Use as cover', icon: <ImageIcon size={15} />, onSelect: () => setCover(collectionId, placement.assetId) },
+              ...(parent
+                ? [
+                    { label: 'Select frame', icon: <SquareDashedMousePointer size={15} />, onSelect: () => setSelection([parent.id]) },
+                    { label: 'Take out of frame', icon: <SquareArrowOutUpRight size={15} />, onSelect: () => ctrl.takeOutOfFrames([placement.id]) },
+                  ]
+                : []),
               'separator' as const,
             ]
           : []),
@@ -169,16 +196,23 @@ export function CanvasPane({ collectionId }: { collectionId: string }) {
         { label: 'Bring to front', icon: <ArrowUpToLine size={15} />, onSelect: () => ctrl.bringToFront() },
         { label: 'Send to back', icon: <ArrowDownToLine size={15} />, onSelect: () => ctrl.sendToBack() },
         'separator' as const,
-        { label: multi ? `Delete ${selection.length} items` : 'Delete', icon: <Trash2 size={15} />, danger: true, trail: '⌫', onSelect: () => deleteItems(collectionId, selection) },
+        {
+          label: multi ? `Delete ${selection.length} items` : inside ? `Delete frame and ${plural(inside, 'clip')}` : 'Delete',
+          icon: <Trash2 size={15} />,
+          danger: true,
+          trail: '⌫',
+          onSelect: () => deleteItems(collectionId, selection),
+        },
       ];
     }
     return [
       { label: 'Add text here', icon: <Type size={15} />, trail: 'T', onSelect: () => ctrl.placeNoteAtClient(menu.x, menu.y) },
+      { label: 'Add frame here', icon: <FrameIcon size={15} />, trail: 'R', onSelect: () => ctrl.placeFrameAtClient(menu.x, menu.y) },
       { label: 'Fit all', icon: <Maximize size={15} />, trail: 'F', onSelect: () => ctrl.fitAll() },
     ];
   }, [menu, ctrl, selection, collectionId]);
 
-  const empty = placementCount === 0 && noteCount === 0;
+  const empty = placementCount === 0 && noteCount === 0 && frameCount === 0;
   const target = useStore((s) => s.user.activeTargetId === collectionId);
 
   return (
@@ -223,7 +257,7 @@ export function CanvasPane({ collectionId }: { collectionId: string }) {
       {focus && ctrl && <FocusBar ctrl={ctrl} focus={focus} />}
       {focus && infoPanel && focusAsset && (
         <div className="board-info" style={{ width: `min(${INFO_MAX}px, ${INFO_SHARE * 100}%)` }}>
-          <InfoPanel asset={focusAsset} />
+          <InfoPanel asset={focusAsset} player={ctrl ? focusPlayhead(ctrl) : undefined} />
         </div>
       )}
 
@@ -278,6 +312,45 @@ function textMenu(collectionId: string, notes: Note[], edit: () => void): MenuEn
     { label: 'Underline', icon: <Underline size={15} />, trail: '⌘U', checked: all((n) => n.underline), onSelect: () => toggleNoteFormat(collectionId, ids, 'underline') },
     'separator',
   ];
+}
+
+const COLOR_NAMES: Record<FrameColor, string> = {
+  default: 'Plain',
+  grey: 'Grey',
+  red: 'Red',
+  orange: 'Orange',
+  yellow: 'Yellow',
+  green: 'Green',
+  blue: 'Blue',
+  purple: 'Purple',
+  pink: 'Pink',
+};
+
+// Colour picker for the selected frames. It stays open, so colours can be
+// tried in turn.
+function FrameSwatches({ collectionId, ids }: { collectionId: string; ids: string[] }) {
+  const theme = useResolvedTheme();
+  // A string, so the selector's result is stable between renders.
+  const current = useStore((s) => [...new Set(ids.map((id) => s.frames[id]?.color))].join());
+  return (
+    <>
+      <div className="menu-title">Colour</div>
+      <div className="frame-swatches">
+        {FRAME_COLORS.map((c) => (
+          <button
+            key={c}
+            type="button"
+            className="frame-swatch"
+            title={COLOR_NAMES[c]}
+            aria-label={COLOR_NAMES[c]}
+            aria-pressed={current === c}
+            style={{ background: frameColors[theme][c] }}
+            onClick={() => setFrameColor(collectionId, ids, c)}
+          />
+        ))}
+      </div>
+    </>
+  );
 }
 
 function sameRect(a: Rect | null, b: Rect | null): boolean {
@@ -362,6 +435,9 @@ function BoardToolbar({ tool, ctrl, collectionId }: { tool: Tool; ctrl: BoardCon
       </IconButton>
       <IconButton label="Text (T)" pressed={tool === 'note'} onClick={() => set('note')}>
         <Type size={15} />
+      </IconButton>
+      <IconButton label="Frame (R)" pressed={tool === 'frame'} onClick={() => set('frame')}>
+        <FrameIcon size={15} />
       </IconButton>
       <CommentToolButton tool={tool} ctrl={ctrl} />
       <span className="sep optional" />

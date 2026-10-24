@@ -3,6 +3,7 @@ import { remoteEnabled } from '../config.ts';
 import { useAuth } from '../data/supabase.ts';
 import { boardRegistry } from './canvas/registry.ts';
 import { DetailView } from './detail/DetailView.tsx';
+import { purgeDeleted } from './deleteUpload.ts';
 import { ingestFiles, resumeIngests, uploadPending } from './ingest.ts';
 import { isTyping } from './keys.ts';
 import { SignInForm } from './SignInForm.tsx';
@@ -71,6 +72,7 @@ function RemoteApp() {
       .then(() => {
         resumeIngests();
         void uploadPending();
+        void purgeDeleted();
       })
       .catch((e: unknown) => {
         console.error(e);

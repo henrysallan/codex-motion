@@ -33,6 +33,8 @@ What works:
   placed within ~60 ms playing from the file itself, then decoded once in a
   worker into L0/L1/L2 (H.264 via WebCodecs) in OPFS; a 4 s 1080p clip
   finishes in ~1.6 s. Interrupted ingests resume from the saved original.
+  Uploads stay in their collections until the uploader shares them to the
+  Feed (see "Uploads" below).
 
 ## Run it
 
@@ -194,6 +196,53 @@ press **Similar** for more that look like them. `/` focuses the search.
   tags. Studios' own tags ("Motion Graphics & Film", "Fintech") map onto
   fixed project types and sectors in `src/search/taxonomy.ts`; anything
   unmapped is still searchable as text.
+
+### Uploads: Enrich and the Feed
+
+A clip dropped onto the canvas is yours: it shows in your collections, not
+in the Feed. Its details panel (double-click it) has a **Your upload**
+section, visible only to whoever uploaded it:
+
+- **Enrich** tags the clip's frames and, given a link to the project or
+  video, reads that page for project details. The app builds the same
+  16-frame contact sheet as `npm run tag`, from the L1 proxy (WebCodecs,
+  about 0.1–1 s), and posts it with the link to `POST /api/enrich`
+  (`api/enrich.ts`, a Vercel Function; the dev server serves it too). The
+  page is read as served, with robots.txt honoured and no headless browser,
+  then structured with the scraper's enrichment prompt; the sheet goes
+  through the tagger's prompt (`scripts/lib/tagging.ts`). Both use Haiku
+  5.5: measured about $0.0004–0.0006 a page and $0.0005 a sheet, 2–4 s
+  each. The result lands in the asset's `source_url`, `source` and
+  `analysis`, written with the uploader's own token, so row-level security
+  decides. It needs Supabase and `ANTHROPIC_API_KEY` on the server.
+- **Show in Feed** (`assets.in_feed`) puts the clip in everyone's Feed and
+  search. The search index bundle only covers the library, so the app
+  builds a shared upload's search doc itself (`src/search/docs.ts`, the
+  same code `npm run index` uses) from its source and tags. Uploads get no
+  SigLIP embedding, so they match on text and tags, not on looks.
+
+**Upload limit.** Each account stores up to 1 GB of uploads (decimal, as
+Finder counts), the original and its L0/L1/L2 proxies all counted; the
+account menu shows how much is used. Admins (`private.admins`, today just
+isthishenry@gmail.com) have no limit. A drop that doesn't fit is turned
+away before it's processed. After its proxies are built, the app reserves
+the clip's full size with `reserve_upload()`; a trigger on `assets.bytes`
+refuses any reservation past the limit, and the media Worker stores no
+more under `media/<hash>/` than the row has reserved
+(`supabase/migrations/20261023235500_upload_quota.sql`). A clip that fits
+on drop but not once its proxies exist keeps playing on that device, isn't
+saved, and tries again on the next open.
+
+**Delete upload** (same panel) gives the space back. `delete_upload()`
+takes the clip off the uploader's collections and drops its row in one
+transaction, then leaves a tombstone that lets the uploader delete its
+files through the Worker (`DELETE /media/<hash>/`); a deletion of files
+that doesn't finish runs again on the next open
+(`supabase/migrations/20261023235900_delete_uploads.sql`,
+`src/app/deleteUpload.ts`). It's refused while anyone else has the clip in
+a collection, since their boards aren't the uploader's to change. Copies
+in Cloudflare's edge cache outside the location that served the delete
+age out on their own.
 
 ### Canvas controls
 
