@@ -110,6 +110,8 @@ export function classifyMedia(href: string, base?: string): MediaRef | null {
   const host = u.hostname.toLowerCase();
   const path = safeDecode(u.pathname);
   const rest = host.replace(/^www\./, '') + u.pathname + u.search;
+  // Placeholders left in templates and player configs (RFC 2606 names).
+  if (/(^|\.)example\.(com|org|net)$/.test(host)) return null;
 
   // Vimeo's progressive files carry the video id; key them with the player
   // so the embed and its file land in one item.
