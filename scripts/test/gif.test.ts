@@ -83,3 +83,10 @@ test("a WordPress GIF and its resized copy in separate elements are one item, or
   assert.equal(groups.length, 1);
   assert.deepEqual(groups[0].urls.map((u) => u.url), ['https://studio.example/up/spin.gif', 'https://studio.example/up/spin-640x640.gif']);
 });
+
+test('a GIF file name in alt text is a label, not a link', () => {
+  const html = `<html><body><noscript><img src="https://images.squarespace-cdn.example/v1/abc/Logo-animation.gif" alt="Logo-animation.gif" /></noscript>
+    <img class="thumb-image" data-src="https://images.squarespace-cdn.example/v1/abc/Logo-animation.gif" alt="Logo-animation.gif" data-image-title="Logo-animation.gif"></body></html>`;
+  const { candidates } = extractPage(html, 'https://studio.example/motion', 'static');
+  assert.deepEqual(candidates.map((c) => c.url), ['https://images.squarespace-cdn.example/v1/abc/Logo-animation.gif']);
+});

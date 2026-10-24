@@ -34,6 +34,8 @@ const MEDIA_HINT = /\.(mp4|m4v|mov|webm|m3u8|mpd|gif)|vimeo|youtu|wistia|mux\.co
 // Keys that label a video rather than locate it: players put the file's
 // name in a title ("Reel-1080.mp4"), which isn't a URL relative to the page.
 const LABEL_KEY = /^(title|name|alt|caption|label|file_?name|description)$/i;
+// The attribute version: Squarespace puts a GIF's file name in its alt.
+const LABEL_ATTR = /^(alt|title|aria-label|aria-description|placeholder|data-(image-)?(title|name|caption|alt|description|file-?name))$/i;
 const MORE = /^(load|show|see|view) (more|all)\b|^more (work|projects)\b|^next page$/i;
 const SKIP_TEXT = new Set(['script', 'style', 'noscript', 'svg', 'template', 'iframe', 'video', 'audio', 'canvas']);
 const INLINE = new Set(['b', 'i', 'em', 'strong', 'u', 'sup', 'sub', 'small', 'mark', 'abbr', 'code', 'wbr']);
@@ -260,7 +262,7 @@ export function extractPage(html: string, pageUrl: string, tier: Tier, status = 
     if (el.name === 'video' || el.name === 'source' || el.name === 'iframe' || el.name === 'script' || el.name === 'style' || el.name === 'meta') return;
     if (el.name === 'link' && el.attribs.as !== 'video') return;
     for (const [k, val] of Object.entries(el.attribs)) {
-      if ((k === 'href' && el.name === 'a') || k === 'srcset' || k === 'style' || !MEDIA_HINT.test(val)) continue;
+      if ((k === 'href' && el.name === 'a') || k === 'srcset' || k === 'style' || LABEL_ATTR.test(k) || !MEDIA_HINT.test(val)) continue;
       for (const url of urlsInAttr(val)) {
         found.add(url, el.name === 'link' ? 'preload' : 'data-attr', {
           element: { tag: el.name, attrs: attrsOf(el) },

@@ -227,6 +227,12 @@ for (const u of fromSitemap) enqueue(u, Math.max(1, new URL(u).pathname.split('/
 await crawl();
 const staticKeys = allKeys().size;
 log(`  static  ${pages.size} pages${fromSitemap.length ? ` (sitemap listed ${fromSitemap.length})` : ''} · ${staticKeys} videos${robotsSkipped ? ` · ${robotsSkipped} pages disallowed by robots.txt` : ''}`);
+// Rate-limited from the first request: Chrome and the agent would only see
+// the same error page, so stop rather than pay for them.
+if (pages.size && [...pages.values()].every((p) => p.status === 429)) {
+  log('  the site is rate-limiting this machine (HTTP 429 on every page); stopping. Retry later.');
+  process.exit(1);
+}
 const rootRecord = pages.get(normalizePage(root.toString())!);
 if (rootRecord?.blocked) log('  the homepage served a bot challenge; not trying to get past it.');
 
