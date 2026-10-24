@@ -7,6 +7,7 @@
 //   video-tag    <video src> / <source>, including lazy data-* sources
 //   iframe       player iframes (Vimeo, YouTube, Wistia, Mux, ...)
 //   player-id    data-vimeo-id, <lite-youtube videoid>, Plyr embed ids
+//   img-gif      animated GIFs in <img>, <picture> and CSS backgrounds
 //   data-attr    any attribute holding a media URL (Webflow data-video-urls, ...)
 //   link         <a href> to a file or a player page
 //   og:video     og:video / twitter:player:stream
@@ -29,7 +30,7 @@ export interface Extracted {
 const HEADINGS = 'h1,h2,h3,h4,h5,h6';
 const PLAYER_HINT = /(^|[-_\s])(video|videos|player|vimeo|youtube|plyr|vjs|video-js|jwplayer|mux|wistia|reel|showreel)($|[-_\s])/i;
 const KEEP_ATTRS = new Set(['src', 'autoplay', 'loop', 'muted', 'playsinline', 'controls', 'preload', 'poster', 'width', 'height', 'title', 'aria-label', 'alt', 'id', 'class', 'type', 'allow']);
-const MEDIA_HINT = /\.(mp4|m4v|mov|webm|m3u8|mpd)|vimeo|youtu|wistia|mux\.com|videodelivery|cloudflarestream|loom\.com|streamable|vidyard|mediadelivery|jwplayer|jwplatform/i;
+const MEDIA_HINT = /\.(mp4|m4v|mov|webm|m3u8|mpd|gif)|vimeo|youtu|wistia|mux\.com|videodelivery|cloudflarestream|loom\.com|streamable|vidyard|mediadelivery|jwplayer|jwplatform/i;
 // Keys that label a video rather than locate it: players put the file's
 // name in a title ("Reel-1080.mp4"), which isn't a URL relative to the page.
 const LABEL_KEY = /^(title|name|alt|caption|label|file_?name|description)$/i;
@@ -70,7 +71,21 @@ const unescapeJs = (s: string) =>
   s.replace(/\\u002[Ff]/g, '/').replace(/\\u0026/g, '&').replace(/\\u003[Dd]/g, '=').replace(/\\\//g, '/').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
 
 const ABS_URL = /(?:https?:)?\/\/[^\s"'<>\\()`{}|^]+/g;
-const REL_MEDIA = /(?:^|[\s"'(,=])((?:\.{1,2}\/|\/)?[\w\-./%~]+\.(?:mp4|m4v|mov|webm|m3u8|mpd)(?:\?[^\s"'<>]*)?)(?=$|[\s"'),])/gi;
+const REL_MEDIA = /(?:^|[\s"'(,=])((?:\.{1,2}\/|\/)?[\w\-./%~]+\.(?:mp4|m4v|mov|webm|m3u8|mpd|gif)(?:\?[^\s"'<>]*)?)(?=$|[\s"'),])/gi;
+const GIF = /\.gif(?:[?#\s]|$)/i;
+
+// The URLs of a srcset, largest first (by width or density descriptor).
+export function srcsetUrls(srcset: string): string[] {
+  return srcset
+    .split(/,\s+/)
+    .map((part) => {
+      const [url, size = '1x'] = part.trim().split(/\s+/);
+      return { url, n: parseFloat(size) * (size.endsWith('x') ? 10_000 : 1) };
+    })
+    .filter((e) => e.url)
+    .sort((a, b) => b.n - a.n)
+    .map((e) => e.url);
+}
 
 // URL-looking substrings of an attribute value or script. Bare relative
 // names ("reel.mp4") are only trusted in attributes; in scripts a relative
@@ -223,6 +238,18 @@ export function extractPage(html: string, pageUrl: string, tier: Tier, status = 
     const id = a['data-vimeo-id'] ?? a['data-youtube-id'] ?? a['data-yt-id'] ?? a.videoid ?? a['data-plyr-embed-id'];
     const url = a['data-vimeo-url'] ?? (/^https?:/.test(id ?? '') ? id : id && (provider === 'youtube' ? `https://www.youtube.com/watch?v=${id}` : `https://vimeo.com/${id}`));
     if (url) found.add(url, 'player-id', { element: { tag: el.name, attrs: attrsOf(el) }, context: ctx(el) });
+  });
+
+  // Animated GIFs. One element's sizes are one GIF, largest first; the
+  // downloader drops stills and icons once it can read the file.
+  $('img, picture source, [style*=".gif"]').each((_, el) => {
+    const a = el.attribs;
+    const urls: string[] = [];
+    for (const k of ['srcset', 'data-srcset']) if (a[k] && GIF.test(a[k])) urls.push(...srcsetUrls(a[k]).filter((u) => GIF.test(u)));
+    for (const k of ['data-src', 'data-lazy-src', 'data-original', 'src']) if (a[k] && GIF.test(a[k].trim())) urls.push(a[k].trim());
+    for (const m of (a.style ?? '').matchAll(/url\(\s*['"]?([^'")]+?\.gif(?:\?[^'")]*)?)['"]?\s*\)/gi)) urls.push(m[1]);
+    const unique = [...new Set(urls.map((u) => abs(u)).filter((u): u is string => !!u && !!classifyMedia(u)))];
+    if (unique.length) found.add(unique[0], 'img-gif', { element: { tag: el.name, attrs: attrsOf(el) }, context: ctx(el), variants: unique.slice(1) });
   });
 
   // Any other attribute that holds a media URL.

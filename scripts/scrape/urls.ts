@@ -18,6 +18,10 @@ export interface MediaRef {
 
 const FILE_EXT = /\.(mp4|m4v|mov|webm|ogv|mkv)$/i;
 const STREAM_EXT = /\.(m3u8|mpd)$/i;
+// Animated GIFs count as video (the downloader turns them into MP4s).
+// Spacers, tracking pixels and loaders don't.
+const GIF_EXT = /\.gif$/i;
+const GIF_JUNK = /(^|[-_/.])(spacer|blank|pixel|transparent|clear|empty|dot|1x1|loader|loading|spinner|ajax-loader|preloader)\.gif$/i;
 // Pieces of a stream rather than a video: HLS/DASH segments, Vimeo's MSE ranges.
 const SEGMENT = /\.(ts|m4s|m4a|aac|vtt)$|\/(range|segment|segments|chunk|frag)\/|[-_/](seg|segment|chunk|frag|init)[-_]?\d*\.(mp4|m4s|ts)$/i;
 
@@ -124,6 +128,12 @@ export function classifyMedia(href: string, base?: string): MediaRef | null {
   if (/^manifest-[\w-]+\.(fastly\.)?mux\.com$/.test(host)) return null;
   // An image CDN rendering a still of the video (imgix/Sanity ?fm=jpg).
   if (/^(jpe?g|pjpg|png|webp|avif|gif)$/i.test(u.searchParams.get('fm') ?? '')) return null;
+  // Next.js's image optimizer passes animated GIFs through untouched.
+  if (/\/_next\/image\/?$/.test(path)) {
+    const inner = u.searchParams.get('url');
+    return inner && GIF_EXT.test(inner.split('?')[0]) ? classifyMedia(inner, u.toString()) : null;
+  }
+  if (GIF_EXT.test(path)) return GIF_JUNK.test(path) ? null : { kind: 'file', provider: fileProvider(host), key: fileKey(u), url: u.toString() };
   if (STREAM_EXT.test(path)) {
     const hosted = HOSTED_STREAMS.find(([, p]) => p.test(rest));
     if (hosted) return { kind: 'stream', provider: hosted[0], key: `${hosted[0]}:${hosted[1].exec(rest)![1]}`, url: u.toString() };
@@ -171,7 +181,7 @@ function safeDecode(s: string): string {
 export function looksLikeFilename(t: string): boolean {
   const s = t.trim();
   return (
-    /_.*_|^_|\.(mp4|mov|webm|m4v)$|\bv\d+\b|\bfinal\b|\d{3,4}p\b|\d{3,4}x\d{3,4}/i.test(s) ||
+    /_.*_|^_|\.(mp4|mov|webm|m4v|gif)$|\bv\d+\b|\bfinal\b|\d{3,4}p\b|\d{3,4}x\d{3,4}/i.test(s) ||
     (s.match(/\p{L}/gu) ?? []).length < 3 ||
     /^(untitled|video|vimeo video player|youtube video player)$/i.test(s)
   );
@@ -190,6 +200,8 @@ export function qualityScore(url: string, media?: string): number {
   else if (/(^|[^a-z])(sd|medium|med|tablet)([^a-z]|$)/.test(s)) score = 540;
   else if (/(^|[^a-z])(mobile|small|low|lq|preview|thumb|tiny|lite)([^a-z]|$)/.test(s)) score = 360;
   if (media && /max-width/.test(media)) score -= 500;
+  // WordPress's resized copies of a GIF ("-720x405.gif") are usually stills.
+  if (/-\d{2,4}x\d{2,4}\.gif(\?|$)/.test(s)) score -= 1000;
   if (/\.mp4(\?|$)/.test(s)) score += 1;
   return score;
 }

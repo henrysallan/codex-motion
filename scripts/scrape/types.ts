@@ -165,6 +165,8 @@ export interface ScrapedItem {
     fps?: number;
     codec?: string;
     audio?: boolean;
+    // Set when the file was an animated GIF, kept as an MP4.
+    convertedFrom?: 'gif';
   };
   page: PageSummary;
   appearances: Appearance[];

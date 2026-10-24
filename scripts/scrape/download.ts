@@ -11,6 +11,7 @@ import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
+import { gifRejection, gifToMp4, readGif } from '../lib/gif.ts';
 import { hashFile, probe } from '../lib/media.ts';
 import type { ItemGroup } from './items.ts';
 import { USER_AGENT } from './site.ts';
@@ -36,12 +37,12 @@ export function ytdlpVersion(): string | null {
   return r.status === 0 ? r.stdout.trim() : null;
 }
 
-const EXT_FOR_TYPE: Record<string, string> = { 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/x-matroska': 'mkv', 'video/ogg': 'ogv', 'video/x-m4v': 'm4v' };
+const EXT_FOR_TYPE: Record<string, string> = { 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/x-matroska': 'mkv', 'video/ogg': 'ogv', 'video/x-m4v': 'm4v', 'image/gif': 'gif' };
 
 function extFor(contentType: string, url: string): string {
   const fromType = EXT_FOR_TYPE[contentType.split(';')[0].trim().toLowerCase()];
   if (fromType) return fromType;
-  const m = /\.(mp4|m4v|mov|webm|ogv|mkv)$/i.exec(new URL(url).pathname);
+  const m = /\.(mp4|m4v|mov|webm|ogv|mkv|gif)$/i.exec(new URL(url).pathname);
   return m ? m[1].toLowerCase() : 'mp4';
 }
 
@@ -61,7 +62,7 @@ export async function fetchItem(item: ScrapedItem, group: ItemGroup, opts: Downl
           await check(item, url, kind, referer);
         } else {
           const got = kind === 'file' ? await downloadFile(url, referer, tmp, opts.maxBytes) : await ytdlp(url, referer, tmp, opts);
-          await settle(item, got, opts.dir);
+          await settle(item, got.file.endsWith('.gif') ? await fromGif(got) : got, opts.dir);
         }
         item.media.downloadedFrom = url;
         return;
@@ -88,6 +89,21 @@ interface Got {
   lastModified?: string;
   etag?: string;
   info?: Record<string, unknown>;
+  convertedFrom?: 'gif';
+}
+
+// An animated GIF becomes an MP4 beside it. The id stays the GIF's hash, so
+// the same GIF found again maps to the same clip.
+async function fromGif(got: Got): Promise<Got> {
+  const g = readGif(fs.readFileSync(got.file));
+  if (!g) throw new Error('not a readable GIF');
+  const why = gifRejection(g);
+  if (why) throw new Skip(why);
+  const hash = got.hash ?? (await hashFile(got.file));
+  const mp4 = got.file.replace(/\.gif$/, '.mp4');
+  await gifToMp4(got.file, mp4, g);
+  fs.rmSync(got.file);
+  return { ...got, file: mp4, hash, convertedFrom: 'gif' };
 }
 
 // Probe, hash and move a downloaded file into place.
@@ -115,13 +131,16 @@ async function settle(item: ScrapedItem, got: Got, dir: string): Promise<void> {
     ...(got.contentType ? { contentType: got.contentType } : {}),
     ...(got.lastModified ? { lastModified: got.lastModified } : {}),
     ...(got.etag ? { etag: got.etag } : {}),
+    ...(got.convertedFrom ? { convertedFrom: got.convertedFrom } : {}),
   });
   if (got.info) applyEmbedInfo(item, got.info);
 }
 
 async function downloadFile(url: string, referer: string, tmp: string, maxBytes: number): Promise<Got> {
+  const gif = /\.gif$/i.test(new URL(url).pathname);
   const res = await fetch(url, {
-    headers: { 'user-agent': USER_AGENT, referer, accept: 'video/webm,video/mp4,video/*;q=0.9,*/*;q=0.5' },
+    // For a GIF, no image/webp or avif: an image CDN would re-encode it.
+    headers: { 'user-agent': USER_AGENT, referer, accept: gif ? 'image/gif,*/*;q=0.5' : 'video/webm,video/mp4,video/*;q=0.9,*/*;q=0.5' },
     redirect: 'follow',
     signal: AbortSignal.timeout(15 * 60_000),
   });
@@ -130,7 +149,7 @@ async function downloadFile(url: string, referer: string, tmp: string, maxBytes:
     throw new Error(`HTTP ${res.status}`);
   }
   const contentType = res.headers.get('content-type') ?? '';
-  if (/^(text|image)\/|json|xml/i.test(contentType)) {
+  if (/^text\/|json|xml/i.test(contentType) || (/^image\//i.test(contentType) && !/^image\/gif/i.test(contentType))) {
     await res.body.cancel();
     throw new Error(`not a video (${contentType})`);
   }

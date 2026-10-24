@@ -70,6 +70,7 @@ How this works:
 - You drive a headless Chrome with the browser tools. Navigation is limited to the site you are given.
 - Every page you load, scroll or click is scanned for you: <video> sources, player iframes and media network requests are collected automatically, and action results tell you when new videos turn up. You don't need to record those yourself.
 - record_video is for a video the scan can't see, such as a URL you found with javascript_exec or a media request listed by read_network (pass its id).
+- Animated GIFs count as videos; they are converted to MP4. Still GIFs and small icons or loaders are dropped automatically.
 - annotate_page attaches what a project page says (title, client, agency, year, description, credits, disciplines, tags) to the videos on it. Use it on each project page you visit that has videos and real project information.
 - list_found shows what has been collected so far, overall or for one page.
 
