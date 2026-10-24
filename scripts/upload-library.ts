@@ -4,7 +4,7 @@
 // with each asset's source and analysis records. Skips files already
 // uploaded, so it's safe to re-run.
 //
-//   node --env-file=.env.local scripts/upload-library.ts [--sql out.sql]
+//   node --env-file=.env.local scripts/upload-library.ts [--sql out.sql] [--verify-remote]
 //
 // Needs VITE_MEDIA_URL and MEDIA_ADMIN_TOKEN (the Worker's admin secret).
 
@@ -74,10 +74,13 @@ async function uploadMultipart(url: string, file: string): Promise<void> {
   }
 }
 
-// What isn't on disk must be in R2 already, or its asset would point at nothing.
+// What isn't on disk must be in R2 already, or its asset would point at
+// nothing. Checking means a request per file, and every request counts
+// against the media Worker's daily quota (100k on the free plan; a full
+// check of a big library once used most of it), so it's opt-in.
 const remoteOnly = all.filter((f) => !files.includes(f));
 let missing = 0;
-await pool(remoteOnly, 16, async (key) => {
+await pool(process.argv.includes('--verify-remote') ? remoteOnly : [], 16, async (key) => {
   const head = await retry(key, () => fetch(`${base}/${key}`, { method: 'HEAD' }));
   if (!head.ok) {
     missing++;
@@ -85,7 +88,7 @@ await pool(remoteOnly, 16, async (key) => {
   }
 });
 if (missing) process.exit(1);
-if (remoteOnly.length) console.log(`  ${remoteOnly.length} files only in R2, all present`);
+if (remoteOnly.length) console.log(process.argv.includes('--verify-remote') ? `  ${remoteOnly.length} files only in R2, all present` : `  ${remoteOnly.length} files only in R2 (not checked; --verify-remote checks them)`);
 
 await pool(files, 6, async (key) => {
   const url = `${base}/${key}`;
