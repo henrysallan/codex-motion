@@ -45,10 +45,11 @@ async function retry<T>(what: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-// One request carries up to the Worker's 95 MB; bigger proxies (long films)
-// go up in parts through its multipart API.
-const SINGLE_MAX = 90e6;
-const PART = 50e6;
+// The Worker takes up to 95 MB in one request, but since 2026-10-24 single
+// requests over ~55 MB get cut off mid-stream (HTTP/2 PROTOCOL_ERROR), so
+// anything over 40 MB goes up in 25 MB parts through its multipart API.
+const SINGLE_MAX = 40e6;
+const PART = 25e6;
 const auth = { Authorization: `Bearer ${token}` };
 
 async function ok(res: Response): Promise<Response> {
