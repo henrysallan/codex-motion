@@ -13,10 +13,26 @@
 # beside them, and results.tsv records every attempt. Re-running skips what's
 # already downloaded.
 #
+# Vimeo only serves logged-in sessions now. By default cookies are read from
+# Chrome, so log in to vimeo.com there first. For unattended runs, export a
+# cookie file once and point COOKIES at it (no Keychain prompt):
+#   yt-dlp --cookies-from-browser chrome --cookies vimeo-cookies.txt \
+#     --skip-download "https://vimeo.com/76979871"
+# If Vimeo answers that the session isn't logged in, the script stops at the
+# first such error, since every other video would fail the same way.
+#
+# Requests impersonate Chrome's network fingerprint via curl_cffi (install with
+# pip install -U "yt-dlp[default,curl-cffi]"). Keep IMPERSONATE on the same
+# browser the cookies come from. With IMPERSONATE= (empty) the script sends
+# the scraper's user agent instead.
+#
 # Videos behind Vimeo's "verify you're human" check fail with HTTP 401 until
 # Vimeo lifts it for this machine; this script doesn't try to get past it.
 #
-# Env: YTDLP (default yt-dlp), FFMPEG (an arm64 ffmpeg for merging).
+# Env: YTDLP (default yt-dlp), FFMPEG (an arm64 ffmpeg for merging),
+#      COOKIES (cookies.txt path; overrides the browser),
+#      COOKIES_FROM_BROWSER (default chrome; empty = no cookies),
+#      IMPERSONATE (default chrome; empty = scraper user agent instead).
 set -euo pipefail
 
 [ $# -ge 1 ] || { echo "usage: scripts/vimeo-retry.sh media/scraped/<site> [out-dir]" >&2; exit 2; }
@@ -26,8 +42,9 @@ MANIFEST="$SITE_DIR/scrape.json"
 cd "$(dirname "$0")/.."
 OUT=${2:-media/vimeo-retry/$(basename "$SITE_DIR")}
 YTDLP=${YTDLP:-yt-dlp}
-# The scraper's own user agent (scripts/scrape/site.ts), so requests look the same.
-UA=$(node -e "import('./scripts/scrape/site.ts').then((m) => console.log(m.USER_AGENT))")
+COOKIES=${COOKIES:-}
+COOKIES_FROM_BROWSER=${COOKIES_FROM_BROWSER-chrome}
+IMPERSONATE=${IMPERSONATE-chrome}
 mkdir -p "$OUT"
 LOG="$OUT/results.tsv"
 [ -f "$LOG" ] || printf 'time\tvimeo_id\tresult\ttitle\tpage\tdetail\n' > "$LOG"
@@ -52,6 +69,39 @@ if [ "${DRY_RUN:-}" = 1 ]; then
   exit 0
 fi
 
+# Session and fingerprint flags, shared by every request.
+auth=()
+if [ -n "$COOKIES" ]; then
+  [ -f "$COOKIES" ] || { echo "COOKIES file not found: $COOKIES" >&2; exit 1; }
+  auth+=(--cookies "$COOKIES")
+  how="cookies from $COOKIES"
+elif [ -n "$COOKIES_FROM_BROWSER" ]; then
+  auth+=(--cookies-from-browser "$COOKIES_FROM_BROWSER")
+  how="cookies from $COOKIES_FROM_BROWSER"
+else
+  how="no cookies (Vimeo will likely refuse)"
+fi
+if [ -n "$IMPERSONATE" ]; then
+  # Fail here rather than on every video if curl_cffi isn't installed.
+  targets=$("$YTDLP" --list-impersonate-targets 2>&1 || true)
+  if ! awk 'tolower($0) ~ /curl_cffi/ && tolower($0) !~ /unavailable/ { f = 1 } END { exit !f }' <<< "$targets"; then
+    echo "yt-dlp can't impersonate: curl_cffi is missing. Install it with" >&2
+    echo "  pip install -U \"yt-dlp[default,curl-cffi]\"   (or pipx install --force ...)" >&2
+    echo "or run with IMPERSONATE= to use the scraper's user agent instead." >&2
+    exit 1
+  fi
+  auth+=(--impersonate "$IMPERSONATE")
+  how="$how, impersonating $IMPERSONATE"
+else
+  # The scraper's own user agent (scripts/scrape/site.ts), so requests look the same.
+  # Only used without impersonation: a custom UA would contradict the
+  # impersonated browser's fingerprint.
+  UA=$(node -e "import('./scripts/scrape/site.ts').then((m) => console.log(m.USER_AGENT))")
+  auth+=(--add-headers "User-Agent:$UA")
+  how="$how, scraper user agent"
+fi
+echo "auth: $how"
+
 ok=0 failed=0 skipped=0 strikes=0 n=0
 while IFS=$'\t' read -r id url referer title <&3; do
   n=$((n + 1))
@@ -60,7 +110,8 @@ while IFS=$'\t' read -r id url referer title <&3; do
     continue
   fi
   [ "$n" -gt 1 ] && sleep $((5 + RANDOM % 4))
-  args=(--no-playlist --no-colors --referer "$referer" --add-headers "User-Agent:$UA" --no-progress
+  args=(--no-playlist --no-colors --referer "$referer" --no-progress
+    "${auth[@]}"
     --retries 5 --fragment-retries 10 --extractor-retries 3 --retry-sleep exp=1:20
     -f 'bv*+ba/b' -S res:1080 --merge-output-format mp4/mkv --write-info-json --no-write-playlist-metafiles --no-mtime
     --match-filter 'duration <=? 900' --max-filesize 500M -o "$OUT/$id.%(ext)s")
@@ -80,6 +131,7 @@ while IFS=$'\t' read -r id url referer title <&3; do
   else
     strikes=0
     case "$detail" in
+      *"logged-in"*|*"logged in"*|*"account credentials"*|*"registered users"*) result=needs-login ;;
       *"HTTP Error 401"*) result=blocked-or-private ;;
       *"HTTP Error 404"*) result=gone ;;
       *) result=failed ;;
@@ -87,6 +139,10 @@ while IFS=$'\t' read -r id url referer title <&3; do
   fi
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$stamp" "$id" "$result" "$title" "$referer" "$detail" >> "$LOG"
   echo "[$n/$total] $result  $id  $title"
+  if [ "$result" = needs-login ]; then
+    echo "Vimeo says this session isn't logged in ($how). Log in to vimeo.com in the browser or refresh the cookie file, then re-run."
+    break
+  fi
   if [ "$strikes" -ge 3 ]; then
     echo "Vimeo refused 3 requests in a row; stopping. Re-run later to continue."
     break
