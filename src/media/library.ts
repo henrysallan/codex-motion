@@ -80,7 +80,19 @@ export interface AssetSource {
   year?: string;
   credits?: { role: string; name: string }[];
   tags?: string[];
+  // Who made it, for clips from a social platform: their name, handle,
+  // profile page and the links in their bio.
+  creator?: Creator;
+  // When the page or post went up (ISO date).
+  published?: string;
   scrapedAt: string;
+}
+
+export interface Creator {
+  name?: string;
+  handle?: string;
+  url?: string;
+  links?: { title?: string; url: string }[];
 }
 
 export interface Library {

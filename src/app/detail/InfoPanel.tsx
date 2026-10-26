@@ -8,6 +8,7 @@ import { ArrowUpRight, PanelRight, ScanSearch, Sparkles } from 'lucide-react';
 import { type ReactNode, useMemo, useState } from 'react';
 import { remoteEnabled } from '../../config.ts';
 import type { AssetRecord } from '../../data/model.ts';
+import type { Creator } from '../../media/library.ts';
 import { tagLabel, VOCABULARY } from '../../media/vocabulary.ts';
 import { type FacetKey, splitStudios, VOCAB_FACETS } from '../../search/taxonomy.ts';
 import { Button, IconButton, Segmented } from '../../ui/controls.tsx';
@@ -28,7 +29,7 @@ const TAG_GROUPS: { key: string; label: string }[] = [
   { key: 'visual', label: 'Visual' },
 ];
 
-const PROVIDERS: Record<string, string> = { youtube: 'YouTube', vimeo: 'Vimeo', mux: 'Mux', wistia: 'Wistia', cloudflare: 'Cloudflare Stream' };
+const PROVIDERS: Record<string, string> = { youtube: 'YouTube', vimeo: 'Vimeo', mux: 'Mux', wistia: 'Wistia', cloudflare: 'Cloudflare Stream', instagram: 'Instagram' };
 
 const ASPECTS = [[16, 9], [9, 16], [4, 3], [3, 4], [1, 1], [4, 5], [5, 4], [3, 2], [2, 3], [2, 1], [21, 9]];
 
@@ -56,6 +57,11 @@ function length(s: number): string {
 }
 
 const megabytes = (b: number) => `${(b / 1e6).toFixed(b < 10e6 ? 1 : 0)} MB`;
+
+// "PoYin Chen · @poyin.work"
+function creatorLabel(c: Creator): string {
+  return [c.name, c.handle && `@${c.handle}`].filter(Boolean).join(' · ');
+}
 
 function day(at: string | number | undefined): string | undefined {
   const d = at === undefined ? NaN : new Date(at).getTime();
@@ -133,6 +139,7 @@ function Info({ asset, actions }: { asset: AssetRecord; actions?: ReactNode }) {
   const title = source?.pageTitle ?? asset.sourceTitle ?? clipTitle;
   const mediaUrl = safeUrl(source?.mediaUrl);
   const scraped = asset.origin === 'scraper' || !!source;
+  const links = (source?.creator?.links ?? []).filter((l) => safeUrl(l.url));
   const onFind: Find = useStore((s) => s.mode !== 'public') ? find : null;
   // As the search index names them: the agency's parts and the site's studio.
   const studios = [...splitStudios(source?.agency), ...(source?.siteName ? [source.siteName] : [])].filter(
@@ -187,6 +194,32 @@ function Info({ asset, actions }: { asset: AssetRecord; actions?: ReactNode }) {
                         )),
                     ],
                     ['Year', source.year],
+                    [
+                      'Creator',
+                      source.creator ? (safeUrl(source.creator.url) ? (
+                        <a href={safeUrl(source.creator.url)} target="_blank" rel="noreferrer noopener" title={source.creator.url}>
+                          {creatorLabel(source.creator)}
+                          <ArrowUpRight size={11} />
+                        </a>
+                      ) : (
+                        creatorLabel(source.creator)
+                      )) : undefined,
+                    ],
+                    [
+                      'Links',
+                      links.length > 0 ? (
+                        links.map((l, i) => (
+                          <span key={l.url}>
+                            {i > 0 && ', '}
+                            <a href={l.url} target="_blank" rel="noreferrer noopener" title={l.url}>
+                              {hostOf(l.url)}
+                              <ArrowUpRight size={11} />
+                            </a>
+                          </span>
+                        ))
+                      ) : undefined,
+                    ],
+                    ['Published', day(source.published)],
                     [
                       'Source',
                       mediaUrl && (

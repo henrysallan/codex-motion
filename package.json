@@ -11,6 +11,7 @@
     "gen:clips": "node scripts/gen-test-clips.ts",
     "build:proxies": "node scripts/build-proxies.ts",
     "scrape": "node scripts/scrape.ts",
+    "instagram": "node scripts/instagram.ts",
     "tag": "node scripts/tag.ts",
     "embed": "node scripts/embed.ts",
     "index": "node scripts/search-index.ts",

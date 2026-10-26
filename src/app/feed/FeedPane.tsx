@@ -3,7 +3,9 @@
 // Select clips (click, shift-click, cmd-click, marquee) and add them to the
 // active target, pick a collection, or drag them onto the open canvas.
 // Double-click a tile for its details (src/app/detail). The search bar at
-// the top narrows and reorders the tiles (FeedSearch.tsx, src/search).
+// the top narrows and reorders the tiles (FeedSearch.tsx, src/search). The
+// view options (ViewMenu.tsx) switch between the grid and a database list,
+// and set sizes, the grid's gutter and the list's columns (layout.ts).
 // With dev tools on (src/app/devtools.ts), right-clicking a selection can
 // delete it from the database.
 //
@@ -12,10 +14,10 @@
 // two viewports either side of the visible area, and needs the items to.
 
 import { Check, Copy, Crosshair, EyeOff, FolderPlus, Plus, Search, SearchX, Shuffle, Sparkles, Trash2, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { AssetRecord } from '../../data/model.ts';
 import type { OverlayRect, ViewItem } from '../../engine/protocol.ts';
-import { useFeedSearch, useSearch } from '../../search/client.ts';
+import { describeClips, useFeedSearch, useSearch } from '../../search/client.ts';
 import { uploadDoc } from '../../search/docs.ts';
 import type { PoolItem } from '../../search/engine.ts';
 import { Button, IconButton } from '../../ui/controls.tsx';
@@ -25,8 +27,7 @@ import { addAssets } from '../actions.ts';
 import { removeFromLibrary, useDevToolsOn } from '../devtools.ts';
 import { type DropTarget, dropTargets } from '../events.ts';
 import { plural } from '../format.ts';
-import { justifiedRows } from '../layout/arrange.ts';
-import { fractionAcross, rowsInBand, ScrollSurface, type ScrollWindow, type SurfaceHandle } from '../ScrollSurface.tsx';
+import { coverCrop, fractionAcross, rowsInBand, ScrollSurface, type ScrollWindow, type SurfaceHandle } from '../ScrollSurface.tsx';
 import {
   collectedAssetIds,
   createCollection,
@@ -41,23 +42,19 @@ import { useResolvedTheme } from '../theme.ts';
 import { overlayColors } from '../theme.ts';
 import { openDetail } from '../detail/state.ts';
 import { toast } from '../toasts.tsx';
+import { FeedRow } from './FeedRow.tsx';
 import { fuzzStop, isSearching, SearchBar, SearchPanel } from './FeedSearch.tsx';
+import { type FeedCell, type FeedLayout, feedCells } from './layout.ts';
+import { ViewMenu } from './ViewMenu.tsx';
 
-const PAD = 12;
-const GAP = 6;
-const ROW_H = 120;
 const DRAG_THRESHOLD = 5;
 // Viewports beyond the visible band to mount tiles for, and to send the
 // engine items for (at least its sprite residency, RESIDENT_VIEWPORTS).
 const DOM_OVERSCAN = 0.5;
 const ENGINE_OVERSCAN = 2.5;
 
-interface Tile {
+interface Tile extends FeedCell {
   asset: AssetRecord;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
 }
 
 // Tiles [start, end) within `overscan` viewports of the visible band.
@@ -111,25 +108,53 @@ export function FeedPane() {
     return hideAdded ? order.filter((a) => !collected.has(a.id)) : order;
   }, [searching, query.sort, result, assets, order, hideAdded, collected]);
 
+  const layout = useStore((s) => s.feedLayout);
+  const list = layout.view === 'list';
   const { tiles, height } = useMemo(() => {
-    const width = Math.max(0, size.w - PAD * 2);
-    if (width <= 0) return { tiles: [] as Tile[], height: 0 };
-    const boxes = justifiedRows(visible.map((a) => a.width / a.height), width, ROW_H, GAP);
-    const tiles = boxes.map((b, i) => ({ asset: visible[i], x: b.x + PAD, y: b.y + 2, w: b.w, h: b.h }));
-    const last = boxes[boxes.length - 1];
-    return { tiles, height: last ? last.y + last.h + 2 + PAD : 0 };
-  }, [visible, size.w]);
+    const { cells, height } = feedCells(visible.map((a) => a.width / a.height), size.w, layout);
+    return { tiles: cells.map((c, i): Tile => ({ ...c, asset: visible[i] })), height };
+  }, [visible, size.w, layout]);
 
   const [domStart, domEnd] = useMemo(() => nearViewport(tiles, win, DOM_OVERSCAN), [tiles, win]);
   const items = useMemo<ViewItem[]>(() => {
     const [start, end] = nearViewport(tiles, win, ENGINE_OVERSCAN);
     const out: ViewItem[] = [];
     for (let i = start; i < end; i++) {
-      const t = tiles[i];
-      out.push({ id: i + 1, assetId: t.asset.id, x: t.x, y: t.y, w: t.w, h: t.h, z: i });
+      const { asset, media: m } = tiles[i];
+      // List thumbnails are all one shape: crop to fill.
+      const crop = list ? coverCrop(asset.width / asset.height, m.w / m.h) : undefined;
+      out.push({ id: i + 1, assetId: asset.id, x: m.x, y: m.y, w: m.w, h: m.h, z: i, ...(crop ? { crop } : {}) });
     }
     return out;
-  }, [tiles, win]);
+  }, [tiles, win, list]);
+
+  // The list's rows show metadata from the search index.
+  useEffect(() => {
+    if (list) describeClips(tiles.slice(domStart, domEnd).map((t) => t.asset.id));
+  }, [list, tiles, domStart, domEnd]);
+
+  // A new layout keeps the clip at the top of the view in place.
+  const anchor = useRef<{ index: number; offset: number; h: number } | null>(null);
+  const changeLayout = (patch: Partial<FeedLayout>) => {
+    const next = { ...layout, ...patch };
+    if ((Object.keys(patch) as (keyof FeedLayout)[]).every((k) => layout[k] === next[k])) return;
+    const s = surface.current;
+    if (s && s.scrollTop > 0 && tiles.length) {
+      const index = Math.min(rowsInBand(tiles, s.scrollTop, s.scrollTop + 1)[0], tiles.length - 1);
+      anchor.current = { index, offset: tiles[index].y - s.scrollTop, h: tiles[index].h };
+    }
+    updatePrefs({ feedLayout: next });
+  };
+  useLayoutEffect(() => {
+    const a = anchor.current;
+    const s = surface.current;
+    anchor.current = null;
+    const t = a && tiles[a.index];
+    if (!a || !s || !t) return;
+    // Partly scrolled past: by the same share of its new height.
+    const offset = a.offset < 0 ? (a.offset * t.h) / a.h : a.offset;
+    s.scrollBy(t.y - offset - s.scrollTop);
+  }, [tiles]);
 
   const selected = useMemo(() => new Set(selection), [selection]);
   const overlay = useMemo<OverlayRect[]>(() => {
@@ -296,6 +321,7 @@ export function FeedPane() {
           <IconButton label="Reshuffle" onClick={() => updatePrefs({ feedSeed: Math.floor(Math.random() * 1e9) })}>
             <Shuffle size={15} />
           </IconButton>
+          <ViewMenu layout={layout} onChange={changeLayout} />
         </div>
       </header>
       {searchOpen && <SearchPanel result={result} />}
@@ -346,6 +372,19 @@ export function FeedPane() {
       <ScrollSurface items={items} overlay={overlay} contentHeight={height} onResize={onResize} onWindow={setWin} handle={surface} onPointerDown={onBackgroundDown}>
         {tiles.slice(domStart, domEnd).map((t, k) => {
           const i = domStart + k;
+          if (list)
+            return (
+              <FeedRow
+                key={t.asset.id}
+                asset={t.asset}
+                cell={t}
+                selected={selected.has(t.asset.id)}
+                collected={collected.has(t.asset.id)}
+                onPointerDown={(e) => onTileDown(e, i)}
+                onContextMenu={(e) => onTileMenu(e, i)}
+                onDoubleClick={() => openDetail(t.asset.id, tiles.map((x) => x.asset.id))}
+              />
+            );
           return (
             <div
               key={t.asset.id}

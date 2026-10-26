@@ -1,6 +1,6 @@
 // Messages between the app and the search worker.
 
-import type { PoolItem, SearchQuery, SearchResult } from './engine.ts';
+import type { ClipInfo, PoolItem, SearchQuery, SearchResult } from './engine.ts';
 
 export interface IndexInfo {
   // Clips the bundle covers; 0 when there is no bundle (name search only).
@@ -18,9 +18,13 @@ export type ToSearch =
   // vector: the embedded text; undefined while it's on its way, null when
   // there is none. exclude: ids to leave out (null: none); sent only when
   // it changes.
-  | { type: 'query'; seq: number; query: SearchQuery; vector: Float32Array | null | undefined; exclude?: string[] | null };
+  | { type: 'query'; seq: number; query: SearchQuery; vector: Float32Array | null | undefined; exclude?: string[] | null }
+  // Metadata for the Feed's database view; answered once the bundle loads.
+  | { type: 'describe'; ids: string[] };
 
 export type FromSearch =
   | { type: 'ready'; info: IndexInfo }
   | { type: 'error'; message: string }
-  | { type: 'result'; seq: number; result: SearchResult };
+  | { type: 'result'; seq: number; result: SearchResult }
+  // In `ids` order; null for clips nothing describes.
+  | { type: 'described'; ids: string[]; infos: (ClipInfo | null)[] };

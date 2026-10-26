@@ -9,7 +9,7 @@
 import { useEffect, useRef } from 'react';
 import { create } from 'zustand';
 import { config } from '../config.ts';
-import { embeddingText, type PoolItem, type SearchQuery, type SearchResult } from './engine.ts';
+import { type ClipInfo, embeddingText, type PoolItem, type SearchQuery, type SearchResult } from './engine.ts';
 import type { FromSearch, IndexInfo, ToSearch } from './protocol.ts';
 
 interface SearchState {
@@ -37,6 +37,9 @@ function searchWorker(): Worker {
       if (msg.seq < shown) return;
       shown = msg.seq;
       useSearch.setState({ result: msg.result });
+    } else if (msg.type === 'described') {
+      msg.ids.forEach((id, i) => infos.set(id, msg.infos[i]));
+      useClipInfo.setState((s) => ({ version: s.version + 1 }));
     }
   };
   // Signed in: the bundle sits beside the media in R2. Local: public/media.
@@ -46,6 +49,26 @@ function searchWorker(): Worker {
 }
 
 const send = (msg: ToSearch) => searchWorker().postMessage(msg);
+
+// ---- clip metadata ------------------------------------------------------------------
+// For the Feed's database view, asked for as rows come into view. A new pool
+// (an upload's doc may have changed) asks again, keeping what's shown meanwhile.
+
+const infos = new Map<string, ClipInfo | null>();
+const asked = new Map<string, number>();
+let poolGen = 0;
+
+export const useClipInfo = create<{ version: number }>(() => ({ version: 0 }));
+
+// undefined: not here yet; null: nothing describes it.
+export const clipInfo = (id: string) => infos.get(id);
+
+export function describeClips(ids: string[]): void {
+  const need = ids.filter((id) => asked.get(id) !== poolGen);
+  if (!need.length) return;
+  for (const id of need) asked.set(id, poolGen);
+  send({ type: 'describe', ids: need });
+}
 
 // ---- query embeddings ---------------------------------------------------------------
 
@@ -84,6 +107,7 @@ export function useFeedSearch(pool: PoolItem[], query: SearchQuery, exclude: str
 
   useEffect(() => {
     send({ type: 'pool', items: pool });
+    poolGen++;
   }, [pool]);
 
   useEffect(() => {

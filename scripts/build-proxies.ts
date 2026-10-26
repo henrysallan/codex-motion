@@ -112,6 +112,8 @@ function readSidecar(src: string): { item: ScrapedItem; source: AssetSource } | 
       ...(p?.year ? { year: p.year } : {}),
       ...(p?.credits?.length ? { credits: p.credits } : {}),
       ...(p?.tags?.length || p?.disciplines?.length ? { tags: [...new Set([...(p?.disciplines ?? []), ...(p?.tags ?? [])])] } : {}),
+      ...(item.creator ? { creator: item.creator } : {}),
+      ...(item.page.published ? { published: item.page.published } : {}),
       scrapedAt: item.scrapedAt,
     };
     return { item, source };

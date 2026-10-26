@@ -173,6 +173,8 @@ export interface ScrapedItem {
   // yt-dlp's metadata for player-hosted videos, minus the format tables.
   embed?: Record<string, unknown>;
   project?: ProjectInfo;
+  // Who made it, when a platform says (Instagram): see AssetSource.creator.
+  creator?: { name?: string; handle?: string; url?: string; links?: { title?: string; url: string }[] };
   site: { url: string; host: string; name?: string };
   firstSeenAt: string;
   scrapedAt: string;

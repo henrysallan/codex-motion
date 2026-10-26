@@ -154,3 +154,202 @@
   border-radius: 50%;
   opacity: 0.7;
 }
+
+/* Database view (FeedRow.tsx). The engine draws the thumbnail under the
+   DOM, so the row's highlight is a layer with a hole where it sits. */
+.feed-row {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: var(--inset);
+  cursor: pointer;
+}
+
+.feed-row::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-sm);
+  pointer-events: none;
+  mask:
+    linear-gradient(#000 0 0) var(--inset) var(--inset) / var(--tw) var(--th) no-repeat exclude,
+    linear-gradient(#000 0 0);
+}
+
+.feed-row:hover::before {
+  background: var(--surface-hover);
+}
+
+.feed-row.selected::before {
+  background: var(--accent-soft);
+}
+
+.feed-row-thumb {
+  position: relative;
+  flex: none;
+  border-radius: 5px;
+}
+
+.feed-row.selected .feed-row-thumb {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.feed-row-thumb .added-mark {
+  top: 3px;
+  right: 3px;
+}
+
+/* Line heights here set the row's line budget in FeedRow.tsx. */
+.feed-row-text {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.feed-row-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  line-height: 15px;
+}
+
+.feed-row-title .t {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11.5px;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feed-row-title .len {
+  flex: none;
+  color: var(--text-3);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.feed-row-meta {
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: 10.5px;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One line: chips that don't fit wrap out of sight rather than clip. */
+.feed-row-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  height: 16px;
+  overflow: hidden;
+}
+
+.feed-row-tags .tag {
+  flex: none;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 6px;
+  border-radius: var(--pill);
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-size: 9.5px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.feed-row-tags .fmt {
+  flex: none;
+  margin-left: 2px;
+  line-height: 16px;
+  color: var(--text-3);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.feed-row-caption {
+  display: -webkit-box;
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: 10.5px;
+  line-height: 14px;
+  -webkit-box-orient: vertical;
+}
+
+/* View options (ViewMenu.tsx). */
+.view-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px 6px 4px;
+}
+
+.view-menu > .segmented {
+  display: flex;
+}
+
+.view-menu .segmented button {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.vm-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+}
+
+.vm-label {
+  width: 50px;
+  flex: none;
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.vm-row .range {
+  flex: 1;
+  min-width: 0;
+}
+
+.vm-row > .segmented {
+  flex: 1;
+  display: flex;
+}
+
+.vm-value {
+  width: 34px;
+  flex: none;
+  color: var(--text-2);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.vm-reset {
+  align-self: flex-end;
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  color: var(--text-2);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+
+.vm-reset:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}

@@ -69,6 +69,21 @@ export interface Suggestion {
   replace: 'all' | 'last';
 }
 
+// A clip's metadata in brief, for the Feed's database view.
+export interface ClipInfo {
+  // The project's title, else the clip's.
+  title: string;
+  studios: string[];
+  client?: string;
+  year?: number;
+  // The site's display name.
+  site?: string;
+  projectTypes: string[];
+  // Technique and content labels.
+  tags: string[];
+  caption?: string;
+}
+
 export type SemanticState = 'off' | 'pending' | 'on';
 
 export interface SearchResult {
@@ -274,6 +289,26 @@ export class SearchIndex {
 
   get hasVectors(): boolean {
     return !!this.vectors;
+  }
+
+  // From the bundle, else from the doc the app built (`extra`); null when
+  // neither knows the clip.
+  describe(id: string, extra?: PoolDoc): ClipInfo | null {
+    const row = this.bundleRow.get(id);
+    const d = row !== undefined ? this.bundle.docs[row] : extra?.doc;
+    if (!d) return null;
+    const page = row !== undefined ? (d.page >= 0 ? this.bundle.pages[d.page] : null) : (extra?.page ?? null);
+    const tags = d.tags.filter((t) => t.startsWith('technique:') || t.startsWith('use:')).map(tagText);
+    return {
+      title: page?.title || d.title,
+      studios: page?.studios ?? [],
+      ...(page?.client ? { client: page.client } : {}),
+      ...(page?.year ? { year: page.year } : {}),
+      ...(page ? { site: this.bundle.sites[page.site] ?? (extra?.siteName || page.site) } : {}),
+      projectTypes: page?.projectTypes ?? [],
+      tags,
+      ...(d.caption ? { caption: d.caption } : {}),
+    };
   }
 
   private pageTokens(i: number) {

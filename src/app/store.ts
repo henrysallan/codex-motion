@@ -26,6 +26,7 @@ import * as remote from '../data/remote.ts';
 import { enqueue } from '../data/sync.ts';
 import type { Library } from '../media/library.ts';
 import { emptyQuery, type SearchQuery } from '../search/engine.ts';
+import { defaultFeedLayout, type FeedLayout } from './feed/layout.ts';
 import { justifiedRows } from './layout/arrange.ts';
 import { type Box, placeIncoming } from './layout/relax.ts';
 
@@ -44,6 +45,8 @@ interface Prefs {
   collectionsFolder: string | null;
   feedSeed: number;
   feedHideAdded: boolean;
+  // The Feed's view options: grid or database list, sizes, gutter, columns.
+  feedLayout: FeedLayout;
   // The Feed's search: text, facet filters, similar-to seeds, fuzziness, sort.
   feedQuery: SearchQuery;
   // Whether the search's filter panel is open.
@@ -107,6 +110,7 @@ const defaultPrefs: Prefs = {
   collectionsFolder: null,
   feedSeed: 1,
   feedHideAdded: false,
+  feedLayout: defaultFeedLayout,
   feedQuery: emptyQuery(),
   feedSearchOpen: false,
   snap: false,
@@ -122,7 +126,7 @@ function loadPrefs(): Prefs {
     const saved = JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}') as Partial<Prefs> & { version?: number };
     // v2: snapping off by default.
     if ((saved.version ?? 1) < 2) delete saved.snap;
-    return { ...defaultPrefs, ...saved, feedQuery: { ...emptyQuery(), ...saved.feedQuery } };
+    return { ...defaultPrefs, ...saved, feedLayout: { ...defaultFeedLayout, ...saved.feedLayout }, feedQuery: { ...emptyQuery(), ...saved.feedQuery } };
   } catch {
     return defaultPrefs;
   }

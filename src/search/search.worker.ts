@@ -3,7 +3,7 @@
 // latest, so typing never queues up stale searches.
 
 import { type SearchBundle, type SearchManifest, unpackVectors } from './bundle.ts';
-import { type PoolItem, SearchIndex } from './engine.ts';
+import { type PoolDoc, type PoolItem, SearchIndex } from './engine.ts';
 import type { FromSearch, ToSearch } from './protocol.ts';
 
 const post = (msg: FromSearch) => (self as unknown as Worker).postMessage(msg);
@@ -17,6 +17,10 @@ let current: Extract<ToSearch, { type: 'query' }> | null = null;
 let stale = false;
 let scheduled = false;
 let exclude: Set<string> | undefined;
+// Describe requests that came before the bundle, and the pool's own docs
+// by id (built when first needed).
+let waiting: string[] = [];
+let extras: Map<string, PoolDoc> | null = null;
 
 const empty: SearchBundle = { version: 1, built: '', sites: {}, pages: [], docs: [] };
 
@@ -40,6 +44,17 @@ async function load(manifestUrl: string, base: string): Promise<void> {
   }
   poolDirty = true;
   schedule();
+  if (waiting.length) describe(waiting);
+  waiting = [];
+}
+
+function describe(ids: string[]): void {
+  if (!index) {
+    waiting.push(...ids);
+    return;
+  }
+  extras ??= new Map((pool ?? []).flatMap((p) => (p.extra ? [[p.id, p.extra] as const] : [])));
+  post({ type: 'described', ids, infos: ids.map((id) => index!.describe(id, extras!.get(id))) });
 }
 
 function schedule(): void {
@@ -69,10 +84,11 @@ self.onmessage = (e: MessageEvent<ToSearch>) => {
   else if (msg.type === 'pool') {
     pool = msg.items;
     poolDirty = true;
+    extras = null;
     schedule();
   } else if (msg.type === 'query') {
     if (msg.exclude !== undefined) exclude = msg.exclude ? new Set(msg.exclude) : undefined;
     current = msg;
     schedule();
-  }
+  } else if (msg.type === 'describe') describe(msg.ids);
 };
