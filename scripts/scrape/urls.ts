@@ -125,8 +125,14 @@ export function classifyMedia(href: string, base?: string): MediaRef | null {
 
   // Vimeo's progressive files carry the video id; key them with the player
   // so the embed and its file land in one item.
+  // An external link can also be an HLS/DASH playlist, which yt-dlp fetches.
   const vimeoFile = /vimeo\.com\/(?:external\/(\d+)|progressive_redirect\/playback\/(\d+))/.exec(host + u.pathname);
-  if (vimeoFile) return { kind: 'file', provider: 'vimeo', key: `vimeo:${vimeoFile[1] ?? vimeoFile[2]}`, url: u.toString() };
+  if (vimeoFile) return { kind: STREAM_EXT.test(path) ? 'stream' : 'file', provider: 'vimeo', key: `vimeo:${vimeoFile[1] ?? vimeoFile[2]}`, url: u.toString() };
+  // Vimeo's signed adaptive manifests (/play/<uuid>/hls.m3u8?s=<id>_<expiry>_<sig>)
+  // expire, and pages keep stale ones; keyed by the video id they merge with
+  // its player and files instead of failing as videos of their own.
+  const vimeoPlay = host === 'player.vimeo.com' && path.startsWith('/play/') ? /^(\d{6,})_\d{9,}_/.exec(u.searchParams.get('s') ?? '') : null;
+  if (vimeoPlay) return { kind: 'stream', provider: 'vimeo', key: `vimeo:${vimeoPlay[1]}`, url: u.toString() };
 
   if (SEGMENT.test(path)) return null;
   if (isMuxRendition(host)) return null;

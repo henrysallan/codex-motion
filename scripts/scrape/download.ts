@@ -152,7 +152,7 @@ async function fetchFile(url: string, referer: string, tmp: string, maxBytes: nu
     throw httpError(url, res.status);
   }
   const contentType = res.headers.get('content-type') ?? '';
-  if (/^text\/|json|xml/i.test(contentType) || (/^image\//i.test(contentType) && !/^image\/gif/i.test(contentType))) {
+  if (/^text\/|json|xml|mpegurl/i.test(contentType) || (/^image\//i.test(contentType) && !/^image\/gif/i.test(contentType))) {
     await res.body.cancel();
     throw new Error(`not a video (${contentType})`);
   }

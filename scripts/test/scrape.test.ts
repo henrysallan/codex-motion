@@ -289,3 +289,11 @@ test('FrameRate links are embeds keyed by video, found in iframes and links', ()
   // Mux's per-rendition playlists aren't videos of their own.
   assert.equal(classifyMedia('https://manifest-oci-us-phoenix-1-vop1.fastly.mux.com/abc/rendition.m3u8?cdn=fastly'), null);
 });
+
+test('Vimeo external playlists are streams; signed /play/ manifests key by video id', () => {
+  assert.deepEqual(classifyMedia('https://player.vimeo.com/external/1195935700.m3u8?s=8527&logging=false'), { kind: 'stream', provider: 'vimeo', key: 'vimeo:1195935700', url: 'https://player.vimeo.com/external/1195935700.m3u8?s=8527&logging=false' });
+  assert.equal(classifyMedia('https://player.vimeo.com/external/1195935700.hd.mp4?s=8527')?.kind, 'file');
+  const play = classifyMedia('https://player.vimeo.com/play/60601361-f1d0-4053-9f21-4772459263a8/hls.m3u8?s=1146371509_1765987623_5253148c');
+  assert.deepEqual([play?.kind, play?.key], ['stream', 'vimeo:1146371509']);
+  assert.equal(classifyMedia('https://player.vimeo.com/play/60601361-f1d0-4053-9f21-4772459263a8/dash.mpd?s=1146371509_1765987623_5253148c')?.key, 'vimeo:1146371509');
+});
