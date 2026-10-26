@@ -36,6 +36,10 @@ const MEDIA_HINT = /\.(mp4|m4v|mov|webm|m3u8|mpd|gif)|vimeo|youtu|wistia|mux\.co
 const LABEL_KEY = /^(title|name|alt|caption|label|file_?name|description)$/i;
 // The attribute version: Squarespace puts a GIF's file name in its alt.
 const LABEL_ATTR = /^(alt|title|aria-label|aria-description|placeholder|data-(image-)?(title|name|caption|alt|description|file-?name))$/i;
+// A media string in data that could be a link. A bare file name with no path
+// ("Landing_Page_1.mp4") is a label, often stored right beside the real URL
+// in arrays (devalue, RSC) where there's no key to say so.
+const isLocator = (v: string) => MEDIA_HINT.test(v) && v.includes('/');
 const MORE = /^(load|show|see|view) (more|all)\b|^more (work|projects)\b|^next page$/i;
 const SKIP_TEXT = new Set(['script', 'style', 'noscript', 'svg', 'template', 'iframe', 'video', 'audio', 'canvas']);
 const INLINE = new Set(['b', 'i', 'em', 'strong', 'u', 'sup', 'sub', 'small', 'mark', 'abbr', 'code', 'wbr']);
@@ -111,7 +115,7 @@ export function urlsInAttr(value: string): string[] {
     try {
       const out: string[] = [];
       walkJson(JSON.parse(value), (obj) => {
-        for (const [k, v] of Object.entries(obj)) if (typeof v === 'string' && v.length < 2000 && !LABEL_KEY.test(k) && MEDIA_HINT.test(v)) out.push(v);
+        for (const [k, v] of Object.entries(obj)) if (typeof v === 'string' && v.length < 2000 && !LABEL_KEY.test(k) && isLocator(v)) out.push(v);
       });
       return out;
     } catch {
@@ -307,7 +311,7 @@ export function extractPage(html: string, pageUrl: string, tier: Tier, status = 
       try {
         walkJson(JSON.parse(body), (obj) => {
           for (const [k, v] of Object.entries(obj)) {
-            if (typeof v !== 'string' || v.length > 2000 || LABEL_KEY.test(k) || !MEDIA_HINT.test(v)) continue;
+            if (typeof v !== 'string' || v.length > 2000 || LABEL_KEY.test(k) || !isLocator(v)) continue;
             found.add(v, 'inline-json', Array.isArray(obj) ? {} : { meta: { json: scalars(obj) } });
           }
         });

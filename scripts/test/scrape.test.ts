@@ -297,3 +297,9 @@ test('Vimeo external playlists are streams; signed /play/ manifests key by video
   assert.deepEqual([play?.kind, play?.key], ['stream', 'vimeo:1146371509']);
   assert.equal(classifyMedia('https://player.vimeo.com/play/60601361-f1d0-4053-9f21-4772459263a8/dash.mpd?s=1146371509_1765987623_5253148c')?.key, 'vimeo:1146371509');
 });
+
+test('a bare file name beside its URL in page data is a label', () => {
+  const data = JSON.stringify([{ src: 1 }, 'https://cdn.studio.example/website-assets/landing_page_1.mp4', 'Landing_Page_1.mp4', 'video/mp4']);
+  const { candidates } = extractPage(html(`<script type="application/json">${data}</script>`), PAGE, 'static');
+  assert.deepEqual(candidates.map((c) => c.url), ['https://cdn.studio.example/website-assets/landing_page_1.mp4']);
+});
