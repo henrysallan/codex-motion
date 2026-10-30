@@ -133,6 +133,14 @@ export function classifyMedia(href: string, base?: string): MediaRef | null {
   // its player and files instead of failing as videos of their own.
   const vimeoPlay = host === 'player.vimeo.com' && path.startsWith('/play/') ? /^(\d{6,})_\d{9,}_/.exec(u.searchParams.get('s') ?? '') : null;
   if (vimeoPlay) return { kind: 'stream', provider: 'vimeo', key: `vimeo:${vimeoPlay[1]}`, url: u.toString() };
+  // Twitter's video CDN lists a video in several sizes and as a playlist,
+  // all under its id.
+  const tweetVideo = host === 'video.twimg.com' ? /^\/(?:amplify_video|ext_tw_video)\/(\d+)\//.exec(path) : null;
+  if (tweetVideo) return { kind: STREAM_EXT.test(path) ? 'stream' : 'file', provider: 'twitter', key: `twitter:${tweetVideo[1]}`, url: u.toString() };
+  // Mave (space-<space>.video-dns.com/<id>/…) serves a clip as AV1, HEVC and
+  // H.264 files under one id; its embed id is the space and id together.
+  const mave = /^space-(\w+)\.video-dns\.com$/.exec(host);
+  if (mave && /^\/\w+\/[^/]+\.(mp4|m3u8)$/i.test(path)) return { kind: STREAM_EXT.test(path) ? 'stream' : 'file', provider: 'mave', key: `mave:${mave[1]}${path.split('/')[1]}`, url: u.toString() };
 
   if (SEGMENT.test(path)) return null;
   if (isMuxRendition(host)) return null;

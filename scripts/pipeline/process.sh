@@ -1,7 +1,8 @@
 #!/bin/zsh
-# As each scrape logged in <log-dir> finishes, builds, embeds, tags and uploads
-# its site, then verifies it in R2 and deletes the local copies. Registration
-# (register-rows.mjs + SQL) and the search index are done afterwards.
+# As each scrape logged in <log-dir> finishes, builds, embeds, drops copies,
+# tags and uploads its site, then verifies it in R2 and deletes the local
+# copies. Registration (register-rows.mjs + SQL) and the search index are done
+# afterwards.
 #
 #   scripts/pipeline/process.sh <log-dir> name ...   (the names given to queue.sh)
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -20,6 +21,8 @@ while [ -n "$(remaining "$@")" ]; do
       if [ -n "$dir" ]; then
         node scripts/build-proxies.ts --in $dir --merge 2>&1 | tr '\r' '\n' | grep -E "assets in|rror" | tail -1
         node scripts/embed.ts 2>&1 | tr '\r' '\n' | grep -E "embedded|rror" | tail -1
+        node $HERE/dupes.mjs $(basename $dir) --apply 2>&1 | grep -E "copies|rror" | tail -1
+        node scripts/embed.ts 2>&1 | tr '\r' '\n' | grep -E "^index|rror" | tail -1
         node scripts/tag.ts 2>&1 | tr '\r' '\n' | grep -E "tagged in|rror" | tail -1
         node --env-file=.env.local scripts/upload-library.ts 2>&1 | tr '\r' '\n' | grep -E "MB →|rror" | tail -2
         node $HERE/prune.mjs --delete 2>&1 | grep -E "proxies:|deleted" | tail -2

@@ -381,7 +381,8 @@ function briefFor(flaggedPages: { url: string; why: string[] }[]): string {
 // ---- 4. items -----------------------------------------------------------------------
 
 const now = new Date().toISOString();
-const siteName = mostCommon([...metas.values()].map((m) => m.og.site_name).filter((s): s is string => !!s));
+// From the site's own pages: a client microsite on a subdomain names itself.
+const siteName = mostCommon([...metas.values()].filter((m) => bareHost(new URL(m.url).hostname) === host).map((m) => m.og.site_name).filter((s): s is string => !!s));
 const site = { url: root.origin + '/', host, ...(siteName ? { name: siteName } : {}) };
 const groups = groupItems(candidates);
 const items: ScrapedItem[] = groups.map((g) => toItem(g, metas, site, now));
@@ -412,6 +413,11 @@ for (const item of items) {
   const p = prevByKey.get(item.key);
   if (!p) continue;
   item.firstSeenAt = p.firstSeenAt ?? item.firstSeenAt;
+  // A copy of another clip (dropped by pipeline/dupes.mjs) stays dropped.
+  if (p.status === 'skipped' && p.reason?.startsWith('duplicate of ')) {
+    Object.assign(item, { status: 'skipped', reason: p.reason });
+    continue;
+  }
   // Done if the file is here, or if it's already in the library (originals
   // of uploaded assets may be deleted to save space).
   const built = !!p.id && fs.existsSync(path.join('public', 'media', p.id, 'asset.json'));

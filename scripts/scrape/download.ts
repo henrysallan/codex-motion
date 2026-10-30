@@ -48,15 +48,19 @@ function extFor(contentType: string, url: string): string {
 
 const mb = (n: number) => `${(n / 1e6).toFixed(1)} MB`;
 
+// Twitter's video CDN refuses another site's Referer, so it gets none.
+const NO_REFERER = /(^|\.)twimg\.com$/;
+
 // Downloads (or, in a dry run, checks) one item, filling in its id, file
 // and media facts. Never throws: failures land in item.status/reason.
 export async function fetchItem(item: ScrapedItem, group: ItemGroup, opts: DownloadOptions): Promise<void> {
-  const referer = group.primary.pageUrl;
+  const page = group.primary.pageUrl;
   const tmp = path.join(opts.dir, '.tmp', randomUUID());
   fs.mkdirSync(tmp, { recursive: true });
   const errors: string[] = [];
   try {
     for (const { url, kind } of group.urls) {
+      const referer = NO_REFERER.test(new URL(url).hostname) ? '' : page;
       try {
         if (opts.dryRun) {
           await check(item, url, kind, referer);
@@ -143,7 +147,7 @@ async function fetchFile(url: string, referer: string, tmp: string, maxBytes: nu
   const gif = /\.gif$/i.test(new URL(url).pathname);
   const res = await fetch(url, {
     // For a GIF, no image/webp or avif: an image CDN would re-encode it.
-    headers: { 'user-agent': USER_AGENT, referer, accept: gif ? 'image/gif,*/*;q=0.5' : 'video/webm,video/mp4,video/*;q=0.9,*/*;q=0.5' },
+    headers: { 'user-agent': USER_AGENT, ...(referer ? { referer } : {}), accept: gif ? 'image/gif,*/*;q=0.5' : 'video/webm,video/mp4,video/*;q=0.9,*/*;q=0.5' },
     redirect: 'follow',
     signal: AbortSignal.timeout(15 * 60_000),
   });
@@ -213,7 +217,7 @@ const lastError = (stderr: string) =>
     .slice(0, 300) ?? stderr.trim().split('\n').pop()?.slice(0, 300);
 
 function ytdlpArgs(referer: string): string[] {
-  return ['--no-playlist', '--no-colors', '--referer', referer, '--add-headers', `User-Agent:${USER_AGENT}`];
+  return ['--no-playlist', '--no-colors', ...(referer ? ['--referer', referer] : []), '--add-headers', `User-Agent:${USER_AGENT}`];
 }
 
 // A response that means Vimeo is refusing this machine, not this video.
@@ -320,7 +324,7 @@ async function ytdlp(url: string, referer: string, tmp: string, opts: DownloadOp
 async function check(item: ScrapedItem, url: string, kind: string, referer: string): Promise<void> {
   if (kind === 'file') {
     const res = await paced(url, async () => {
-      const res = await fetch(url, { method: 'HEAD', headers: { 'user-agent': USER_AGENT, referer }, redirect: 'follow', signal: AbortSignal.timeout(20_000) });
+      const res = await fetch(url, { method: 'HEAD', headers: { 'user-agent': USER_AGENT, ...(referer ? { referer } : {}) }, redirect: 'follow', signal: AbortSignal.timeout(20_000) });
       if (!res.ok && res.status !== 405) throw httpError(url, res.status);
       return res;
     });
@@ -358,10 +362,12 @@ export function applyEmbedInfo(item: ScrapedItem, info: Record<string, unknown>)
   titleFromEmbed(item);
 }
 
-// A player's title beats a page-level guess, unless it's an upload's file name.
+// A player's title beats a page-level guess, unless it's an upload's file name
+// or the generic extractor naming a bare stream by its id (a Mux playback id).
 export function titleFromEmbed(item: ScrapedItem): void {
   const t = typeof item.embed?.title === 'string' ? item.embed.title.trim() : '';
-  if (t && !looksLikeFilename(t) && (item.titleSource === 'page' || item.titleSource === 'url')) {
+  const bare = item.embed?.extractor_key === 'Generic' && t === item.embed.id;
+  if (t && !bare && !looksLikeFilename(t) && (item.titleSource === 'page' || item.titleSource === 'url')) {
     item.title = t.slice(0, 160);
     item.titleSource = 'embed';
   }

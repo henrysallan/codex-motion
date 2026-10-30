@@ -18,6 +18,11 @@ test('classifies files, streams and players', () => {
   assert.deepEqual(classifyMedia('/media/reel.mp4?v=2', PAGE), { kind: 'file', provider: undefined, key: 'studio.example/media/reel.mp4', url: 'https://studio.example/media/reel.mp4?v=2' });
   assert.equal(classifyMedia('https://player.vimeo.com/video/123456789?h=abc&background=1')?.key, 'vimeo:123456789');
   assert.equal(classifyMedia('https://vimeo.com/123456789')?.key, 'vimeo:123456789');
+  // A tweet's video sizes and playlist are one video.
+  for (const u of ['https://video.twimg.com/amplify_video/2043768090820063232/vid/avc1/1202x720/aFbbW-2cL6zjXzfl.mp4', 'https://video.twimg.com/amplify_video/2043768090820063232/pl/Mkcl9Twwq8kv3XFA.m3u8']) assert.equal(classifyMedia(u)?.key, 'twitter:2043768090820063232');
+  // So are a Mave clip's codecs (bakkenbaeck.com).
+  for (const f of ['av1_sd_clip', 'hevc_sd_clip', 'h264_sd']) assert.equal(classifyMedia(`https://space-awx7g.video-dns.com/RQ4A7EzYYy/${f}.mp4`)?.key, 'mave:awx7gRQ4A7EzYYy');
+  assert.equal(classifyMedia('https://space-awx7g.video-dns.com/RQ4A7EzYYy/thumbnail.jpg'), null);
   // Page and unlisted links become the player form, which resolves without a login.
   assert.equal(classifyMedia('https://vimeo.com/989860823/80931b01ff')?.url, 'https://player.vimeo.com/video/989860823?h=80931b01ff');
   assert.equal(classifyMedia('https://player.vimeo.com/video/222222222?h=ab12&background=1')?.url, 'https://player.vimeo.com/video/222222222?h=ab12');
@@ -203,10 +208,30 @@ test('a video named only in data goes to the most specific page', () => {
   assert.equal(items.find((g) => g.key === 'vimeo:222222222')?.primary.pageUrl, 'https://studio.example/projects/two');
 });
 
+test('a mirror page gives a video to the canonical page it names', () => {
+  // basement.studio: /ai/post/x is a "Machine view" of /post/x, canonical to it.
+  const body = '<h1>Behind the Ship</h1><a href="https://www.youtube.com/watch?v=Rn2cf_wJ4f4">the film</a>';
+  const head = (title: string) => `<meta property="og:title" content="${title}"><link rel="canonical" href="https://studio.example/post/ship">`;
+  const mirror = extractPage(html(body, head('Behind the Ship | Machine view')), 'https://studio.example/ai/post/ship', 'static');
+  const post = extractPage(html(body, head('Behind the Ship | Blog')), 'https://studio.example/post/ship', 'static');
+  const metas = new Map([[mirror.meta.url, mirror.meta], [post.meta.url, post.meta]]);
+  // Its player may load in script, so the video is found on the mirror only.
+  for (const order of [[mirror, post], [post, mirror], [mirror]]) {
+    const [item] = groupItems(order.flatMap((p) => p.candidates)).map((g) => toItem(g, metas, { url: 'https://studio.example/', host: 'studio.example' }, ''));
+    assert.equal(item.page.url, 'https://studio.example/post/ship');
+    // The h1 without the "| Blog" section.
+    assert.equal(item.title, 'Behind the Ship');
+  }
+});
+
 test('page titles lose the site name', () => {
   assert.equal(stripSiteName('Aurora — Fixture Studio', 'Fixture Studio'), 'Aurora');
   assert.equal(stripSiteName('Koto | Spotify', 'Koto'), 'Spotify');
   assert.equal(stripSiteName('Tempo', 'Studio Dumbar'), 'Tempo');
+  // No og:site_name: the host stands in for it.
+  const page = extractPage(html('<video src="/v/shot.mp4"></video>', '<meta property="og:title" content="basement Shot | studio.example">'), 'https://studio.example/basketball', 'static');
+  const [item] = groupItems(page.candidates).map((g) => toItem(g, new Map([[page.meta.url, page.meta]]), { url: 'https://studio.example/', host: 'studio.example' }, ''));
+  assert.equal(item.title, 'basement Shot');
 });
 
 test('agent trigger: placeholders beside found videos are not a gap', () => {

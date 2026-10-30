@@ -136,8 +136,19 @@ export function homePage(g: ItemGroup, pages: Map<string, unknown>): string {
   return [...votes].sort((a, b) => b[1] - a[1])[0]?.[0] ?? g.primary.pageUrl;
 }
 
+// A mirror of a page (a print or "machine" view whose canonical names
+// another page) gives way to the page it names, when the video is on both
+// or the two share a heading (the real page may load its player in script).
+export function canonicalPage(g: ItemGroup, url: string, pages: Map<string, PageMeta>): string {
+  const here = pages.get(url);
+  const canon = here?.canonical;
+  const there = canon && canon !== url ? pages.get(canon) : undefined;
+  if (!canon || !here || !there) return url;
+  return g.appearances.some((c) => c.pageUrl === canon) || (!!here.h1 && here.h1 === there.h1) ? canon : url;
+}
+
 export function toItem(g: ItemGroup, pages: Map<string, PageMeta>, site: ScrapedItem['site'], now: string): ScrapedItem {
-  const home = homePage(g, pages);
+  const home = canonicalPage(g, homePage(g, pages), pages);
   const page = pages.get(home);
   return {
     key: g.key,
@@ -173,8 +184,14 @@ function titleFor(g: ItemGroup, page: PageMeta | undefined): Pick<ScrapedItem, '
     const named = c.context?.heading ?? [json.title, json.name, ld.name].find((v): v is string => typeof v === 'string' && !!v.trim());
     if (named) return { title: clean(named, 160), titleSource: 'context' };
   }
-  // og:title is the page's own name; <title> usually carries the site's too.
-  const fromPage = page && ((page.og.title && stripSiteName(page.og.title, page.og.site_name)) || page.h1 || stripSiteName(page.title ?? '', page.og.site_name));
+  // og:title is the page's own name; <title> usually carries the site's too
+  // (named by og:site_name, else often by its host: "Shot | basement.studio").
+  // "Behind the Ship | Blog" over an h1 of "Behind the Ship" adds a section.
+  const siteName = page?.og.site_name ?? (page?.url ? new URL(page.url).hostname.replace(/^www\./, '') : undefined);
+  const og = page?.og.title && stripSiteName(page.og.title, siteName);
+  const h1 = page?.h1;
+  const named = og && h1 && og.startsWith(h1) && /^\s*[|—–\-:·]\s*\S/.test(og.slice(h1.length)) ? h1 : og;
+  const fromPage = page && (named || page.h1 || stripSiteName(page.title ?? '', siteName));
   if (fromPage) return { title: clean(fromPage, 160), titleSource: 'page' };
   const last = new URL(g.urls[0].url).pathname.split('/').filter(Boolean).pop() ?? g.key;
   return { title: clean(decodeURIComponent(last).replace(/\.\w+$/, ''), 160), titleSource: 'url' };

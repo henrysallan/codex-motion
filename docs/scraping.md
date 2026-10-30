@@ -24,11 +24,12 @@ Standing rules:
 | 1. Scrape | `node scripts/scrape.ts <url> --max-pages 300 --agent-turns 20 --ignore-robots` | Static crawl, then Chrome, then the agent if needed. Enriches project pages with Haiku and writes `media/scraped/<host>/` (originals, `<id>.json` sidecars, `scrape.json`). Re-running retries only failed items. |
 | 2. Build | `node scripts/build-proxies.ts --in media/scraped/<host> --merge` | L0 sprite, L1 480p and L2 1080p in `public/media/<id>/`; updates `library.json`. |
 | 3. Embed | `node scripts/embed.ts` | SigLIP 2 vectors for new clips. Local and free. |
-| 4. Tag | `node scripts/tag.ts` | Haiku contact-sheet tags for every untagged clip. Never run two at once: both would tag the same clips. |
-| 5. Upload | `node --env-file=.env.local scripts/upload-library.ts` | Sends local proxies to R2 through the media Worker. Don't pass `--verify-remote` routinely: it sends a request per file (see Gotchas). |
-| 6. Register | `node scripts/pipeline/register-rows.mjs <host> …`, then the SQL below per part | Publishes asset rows as JSON parts through the Worker and prints their URLs. |
-| 7. Prune | `node scripts/pipeline/prune.mjs --delete` | Checks every local proxy against R2 by size and deletes the verified proxies and their originals. Anything not in R2 is kept. |
-| 8. Index | `node --env-file=.env.local scripts/search-index.ts --upload` | Once all of a batch is registered, and with Henry's OK. The manifest goes up last, so a failed run never goes live; just re-run it. |
+| 4. Dedupe | `node scripts/pipeline/dupes.mjs <host> --apply`, then `embed.ts` again | Drops clips that are one video served twice: a Sanity file and its Mux stream, a Mave clip in three codecs, a 4K original and its 1080p stream. Pairs need durations within 0.25 s, alike SigLIP frames and nearly equal pixels (a dark and a light cut of one animation stay apart). Keeps the larger copy, then the one on the deeper page. Dropped items become `duplicate of <id>` in `scrape.json`, so a re-scrape skips them, and their R2 keys go in `media/r2-orphans.txt`. Without `--apply` it's a dry run; the second `embed.ts` only repacks the index. |
+| 5. Tag | `node scripts/tag.ts` | Haiku contact-sheet tags for every untagged clip. Never run two at once: both would tag the same clips. |
+| 6. Upload | `node --env-file=.env.local scripts/upload-library.ts` | Sends local proxies to R2 through the media Worker. Don't pass `--verify-remote` routinely: it sends a request per file (see Gotchas). |
+| 7. Register | `node scripts/pipeline/register-rows.mjs <host> …`, then the SQL below per part | Publishes asset rows as JSON parts through the Worker and prints their URLs. |
+| 8. Prune | `node scripts/pipeline/prune.mjs --delete` | Checks every local proxy against R2 by size and deletes the verified proxies and their originals. Anything not in R2 is kept. |
+| 9. Index | `node --env-file=.env.local scripts/search-index.ts --upload` | Once all of a batch is registered, and with Henry's OK. The manifest goes up last, so a failed run never goes live; just re-run it. |
 
 **Register SQL** (Supabase project `nmmddnszqlrplwvcqgdn`, through the Supabase MCP `execute_sql`): first `create extension if not exists http with schema extensions;`, then for each part URL:
 
@@ -44,7 +45,7 @@ on conflict (id) do update set name = excluded.name, origin = excluded.origin, s
 
 Then `drop extension http;`. Check that `select count(*) from public.assets where origin = 'scraper'` equals the library's scraped count. Append the part keys (`media/<hash>/original.json`) to `media/r2-orphans.txt`, which lists R2 objects nothing uses; Henry deletes them with wrangler.
 
-**Batches.** `scripts/pipeline/queue.sh <log-dir> "url name" …` scrapes two at a time; `TURNS=12` lowers the agent budget. `scripts/pipeline/process.sh <log-dir> name …` runs steps 2–5 and 7 for each site as soon as its scrape finishes, which keeps disk use low. Run both as background jobs, then do steps 6 and 8 once the processor exits. Keep logs under `media/scrape-logs/<batch>/`, which is git-ignored.
+**Batches.** `scripts/pipeline/queue.sh <log-dir> "url name" …` scrapes two at a time; `TURNS=12` lowers the agent budget. `scripts/pipeline/process.sh <log-dir> name …` runs steps 2–6 and 8 for each site as soon as its scrape finishes, which keeps disk use low. Run both as background jobs, then do steps 7 and 9 once the processor exits. Keep logs under `media/scrape-logs/<batch>/`, which is git-ignored.
 
 ## After each site: read the failures
 
@@ -56,6 +57,7 @@ node -e "const j=require('./media/scraped/<host>/scrape.json'); const c={}; for 
 
 - **Vimeo 401 "Unauthorized":** Vimeo's per-video Turnstile check. Count them per site for Henry. He runs `scripts/vimeo-retry.sh media/scraped/<host>` himself; then `node scripts/vimeo-adopt.ts` folds the downloads back into the scrape with their project metadata, and you run steps 2–8.
 - **Many 404s/400s on URLs that are bare file names** (`site.com/Clip_Name.mp4`): almost always a label read as a link, which is a scraper bug. Find where the name sits in the page (alt text, JSON title, data arrays) and fix `scripts/scrape/extract.ts`. Earlier cases: Squarespace `alt`, WordPress player titles, and devalue arrays.
+- **Many clips named after a listing** ("Work", "Showcase"): cards whose clips the crawl saw only in the listing's data or network traffic (a player inside a shadow root, a hover preview), so nothing tied them to a project. Check the names per site (`library.json`, grouped by `name`) and point them at the pages their cards link to. basement.studio and bakkenbaeck.com needed one-off patches for this.
 - **HTTP 429 on every page:** the site is rate-limiting us. The scraper stops by itself; retry another day.
 - **403 with `cf-mitigated: challenge`:** a Cloudflare bot check. Leave it.
 
@@ -64,6 +66,8 @@ node -e "const j=require('./media/scraped/<host>/scrape.json'); const c={}; for 
 Files, HLS/DASH, and the players yt-dlp knows (Vimeo, YouTube, Wistia, Mux, Cloudflare Stream, …).
 
 - **Vimeo:** one request at a time per process, 5–8 s apart, stopping after three refusals in a row (`scripts/scrape/download.ts`). Signed `/play/` manifests are keyed by video id; `/external/*.m3u8` links are treated as streams.
+- **Twitter videos** (`video.twimg.com`) are fetched without a Referer, at Henry's OK (2026-10-27): the CDN refuses another site's.
+- **One video, many URLs:** Twitter sizes and playlists key by tweet video id, Mave (`video-dns.com`) codecs by clip id. A mirror page (basement.studio's `/ai/…` "machine view", canonical to the real page) gives its videos to the page it names.
 - **FrameRate** (framerate.tv) embeds are resolved in Chrome to their Mux stream.
 - **Animated GIFs** become MP4s (`scripts/lib/gif.ts`). Stills, icons and loaders are skipped.
 - **Tests:** `npm test` (`scripts/test/scrape.test.ts`, `gif.test.ts`). Add a case for every extraction fix.
