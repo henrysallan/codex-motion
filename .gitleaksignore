@@ -1,0 +1,6 @@
+# Reviewed false positives for gitleaks (one fingerprint per line).
+#
+# extension/manifest.json "key": the Chrome extension's public key (an RSA
+# SubjectPublicKeyInfo, not a secret), which pins the extension's ID so the
+# native helper can allow it. Chrome's docs publish it in manifests as is.
+4a9d1762dc38fc5bcaa9c36d256a8fbcfba25fc5:extension/manifest.json:generic-api-key:7
