@@ -1,0 +1,42 @@
+# Publishes the Chrome extension (extension/) as a zip on a GitHub release.
+#
+# Bump "version" in extension/manifest.json, then tag and push:
+#   git tag ext-v0.3.0 && git push origin ext-v0.3.0
+# The tag has to name the manifest's version, or the run fails.
+
+name: Extension release
+
+on:
+  push:
+    tags: ['ext-v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Package
+        id: package
+        run: echo "zip=$(node extension/scripts/package.mjs --check-tag "$GITHUB_REF_NAME")" >> "$GITHUB_OUTPUT"
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "${{ steps.package.outputs.zip }}" \
+            --title "motion.isthishenry.chrome ${GITHUB_REF_NAME#ext-v}" \
+            --notes "$(cat <<'EOF'
+          Install or update:
+
+          1. Download the zip below and unzip it somewhere it can stay (Chrome loads the extension from that folder).
+          2. In `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick the `motion.isthishenry.chrome` folder. Updating: replace the folder's contents, then press the reload icon on the extension's card.
+          3. For Vimeo, Instagram, X, YouTube and other streamed players, install the helper: `brew install yt-dlp ffmpeg`, then run `./host/install.sh` from that folder.
+
+          See the README in the zip for what it does.
+          EOF
+          )"

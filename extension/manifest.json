@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "motion.isthishenry.chrome",
+  "version": "0.3.0",
+  "description": "Pull video design references from any page into codex-motion. Click the icon, hover a video, click to grab it.",
+  "minimum_chrome_version": "116",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAm8hBUfZic9OoX0y5RbVQFF6PeiAifPqhOno0+suOTQxk/DRutB1hGr3ss8zGLrDfIr3LysdOFcUGpX30w+9hAVQtKysOvgB9SlYH+fAgTo3aFkQcU7cPwv1kTENhGPrKsCLxbm5SUmlVst2w0PrONu+/NfBhxxzYbcZY0Z+NlZ1OYCtYvw3SvKbH+PKmJOjF6HGtiZF5WwvrHzja7Ly77k0fhthKFR28WKbHITfcjMHukLtYDaXaqDkzCbZTXIbTKmSSdYpx4HXDGuPl0GC8YGSF/xFVGEd8qmyco7ujnAnvXv0WYs0mIpzFrGBHRHWGiuIVXM1lEIQVAvy3yvm5kwIDAQAB",
+  "action": {
+    "default_title": "motion.isthishenry — pick a video (Alt+Shift+V)",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": ["activeTab", "scripting", "downloads", "nativeMessaging"],
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+V",
+        "mac": "Alt+Shift+V"
+      },
+      "description": "Start the video picker"
+    }
+  }
+}

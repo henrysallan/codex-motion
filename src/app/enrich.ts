@@ -12,7 +12,8 @@ import { config } from '../config.ts';
 import { mediaUrl } from '../data/media.ts';
 import type { AssetRecord } from '../data/model.ts';
 import { fetchAssetMeta } from '../data/remote.ts';
-import { accessToken } from '../data/supabase.ts';
+import { accessToken, getSession } from '../data/supabase.ts';
+import { flush } from '../data/sync.ts';
 import { loadBytes } from '../engine/storage.ts';
 import type { AssetAnalysis, AssetSource } from '../media/library.ts';
 import { upsertAsset, useStore } from './store.ts';
@@ -90,7 +91,8 @@ interface EnrichAnswer {
 
 // Reads `url` (if any) and tags the clip's frames, then keeps the results on
 // the asset. `known` is what the details panel already shows, kept where
-// this run adds nothing new.
+// this run adds nothing new. A clip the extension saved sends its capture,
+// which the server reads in place of fetching `url`.
 export async function enrichUpload(a: AssetRecord, url: string, known: Pick<AssetRecord, 'source' | 'analysis'>): Promise<void> {
   if (useEnrich.getState()[a.id]?.step === 'frames' || useEnrich.getState()[a.id]?.step === 'page') return;
   try {
@@ -99,10 +101,12 @@ export async function enrichUpload(a: AssetRecord, url: string, known: Pick<Asse
     report(a.id, { step: 'page' });
     const token = await accessToken();
     if (!token) throw new Error('Sign in to enrich clips');
+    // Only while the link is still the one the extension saw.
+    const capture = a.capture && (!url.trim() || url.trim() === a.capture.url) ? a.capture : undefined;
     const res = await fetch(config.enrichUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ assetId: a.id, url: url.trim() || undefined, sheet }),
+      body: JSON.stringify({ assetId: a.id, url: url.trim() || undefined, sheet, capture }),
     });
     const answer = (await res.json().catch(() => ({}))) as Partial<EnrichAnswer>;
     if (!res.ok) throw new Error(answer.error ?? `HTTP ${res.status}`);
@@ -120,6 +124,18 @@ export async function enrichUpload(a: AssetRecord, url: string, known: Pick<Asse
   } catch (e) {
     report(a.id, { step: 'error', message: e instanceof Error ? e.message : String(e) });
   }
+}
+
+// A clip the extension saved enriches itself once its proxies are built,
+// when someone's signed in: its capture says where it came from, so there's
+// nothing to ask. Signed out, it keeps the source its capture gave it.
+export async function enrichCaptured(id: string): Promise<void> {
+  const a = useStore.getState().assets[id];
+  if (!a?.capture || useStore.getState().mode !== 'remote' || !getSession()) return;
+  // The server reads the clip's row, so that has to be there first.
+  await flush();
+  const now = useStore.getState().assets[id] ?? a;
+  await enrichUpload(now, a.capture.url, { source: now.source, analysis: now.analysis });
 }
 
 // Shares an upload to everyone's Feed, or takes it back out. Search builds

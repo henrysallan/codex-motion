@@ -1,10 +1,14 @@
 // POST /api/enrich: fills in an upload's details, for the Enrich button in
-// a clip's details panel. Body: { assetId, url?, sheet? }
+// a clip's details panel. Body: { assetId, url?, sheet?, capture? }
 //
 // - url: the page the clip came from. It's read as served (robots.txt
 //   honoured, no headless browser), and the scraper's enrichment prompt
 //   (scripts/scrape/enrich.ts) turns it into project fields: title,
 //   client, studio, year, credits, tags.
+// - capture: for a clip the Chrome extension saved, the page as the person
+//   saw it, from the file (src/media/capture.ts). It stands in for
+//   fetching `url`: the same prompt reads it, plus the post's text and the
+//   player's metadata, so signed-in pages (Instagram, private Vimeo) work.
 // - sheet: a contact sheet of the clip as a base64 JPEG, which the app
 //   builds from its L1 proxy (src/app/enrich.ts). It's tagged with the
 //   library's motion vocabulary (scripts/lib/tagging.ts).
@@ -28,6 +32,7 @@ import { clean, extractPage } from '../scripts/scrape/extract.ts';
 import { Fetcher, loadRobots } from '../scripts/scrape/site.ts';
 import type { PageMeta } from '../scripts/scrape/types.ts';
 import { bareHost, classifyMedia, parseUrl } from '../scripts/scrape/urls.ts';
+import { type Capture, captureSource, creatorOf, toCapture } from '../src/media/capture.ts';
 import type { Asset, AssetAnalysis, AssetSource } from '../src/media/library.ts';
 import { isPlatform } from '../src/search/docs.ts';
 import { rateLimit } from './_limit.ts';
@@ -165,6 +170,53 @@ export async function enrichPage(client: Anthropic, usage: Usage, url: URL, row:
   return toSource(page.url, page.meta, out, row.name);
 }
 
+// ---- a capture ----------------------------------------------------------------------------
+
+// The prompt for a captured page: the scraper's page description with the
+// clip as its one video, then what a feed post or the player adds.
+export function describeCapture(c: Capture, meta: PageMeta): string {
+  const { post, ...context } = c.context ?? {};
+  const appearance = { pageUrl: meta.url, url: c.media?.url ?? c.url, tier: 'render' as const, via: 'extension', context: { ...context, index: 0 } };
+  const base = describePage({ url: meta.url, meta, items: [{ appearances: [appearance], ...(c.embed ? { embed: { ...c.embed } } : {}) }] });
+  const e = c.embed;
+  const poster = creatorOf(e);
+  const extra = [
+    post && `Post text: ${post}`,
+    e?.description && e.description !== meta.description && `Player description: ${e.description.slice(0, 3000)}`,
+    poster?.name && `Posted by: ${poster.name}${poster.handle && poster.handle !== poster.name ? ` (@${poster.handle})` : ''}`,
+    e?.tags?.length && `Player tags: ${e.tags.join(', ')}`,
+    c.slide && `The clip is slide ${c.slide.index} of ${c.slide.count} in the post.`,
+  ].filter((l): l is string => typeof l === 'string');
+  return extra.length ? `${base}\n\n${extra.join('\n')}` : base;
+}
+
+// Reads a capture as enrichPage reads a fetched page. Who posted it and
+// when come from the player's metadata, which the page prompt doesn't ask.
+export async function enrichCapture(client: Anthropic, usage: Usage, c: Capture, row: AssetRow): Promise<AssetSource> {
+  const meta: PageMeta = { og: {}, twitter: {}, meta: {}, jsonLd: [], text: '', ...c.page, url: c.page?.url ?? c.url, status: 200 };
+  const response = await client.messages.parse({
+    model: MODEL,
+    max_tokens: 4000,
+    output_config: { effort: 'low', format: zodOutputFormat(Enrichment) },
+    thinking: { type: 'disabled' },
+    system: PAGE_SYSTEM,
+    messages: [{ role: 'user', content: describeCapture(c, meta) }],
+  });
+  addUsage(usage, response.usage);
+  const out = response.parsed_output;
+  if (response.stop_reason === 'refusal' || !out) throw new Fail(502, 'The model couldn’t read that page');
+  const own = captureSource(c, row.name);
+  const source = toSource(c.url, meta, out, own.title);
+  return {
+    ...source,
+    ...(own.mediaUrl && !source.mediaUrl ? { mediaUrl: own.mediaUrl, ...(own.provider ? { provider: own.provider } : {}) } : {}),
+    ...(!source.description && own.description ? { description: own.description } : {}),
+    ...(!source.tags && own.tags ? { tags: own.tags } : {}),
+    ...(own.creator ? { creator: own.creator } : {}),
+    ...(own.published ? { published: own.published } : {}),
+  };
+}
+
 // ---- the frames -------------------------------------------------------------------------
 
 export async function tagSheet(client: Anthropic, usage: Usage, sheet: string, row: AssetRow, source: AssetSource | null): Promise<AssetAnalysis> {
@@ -202,10 +254,13 @@ export async function POST(request: Request): Promise<Response> {
   try {
     const token = /^Bearer (.+)$/.exec(request.headers.get('authorization') ?? '')?.[1];
     if (!token) throw new Fail(401, 'Sign in to enrich clips');
-    const body = (await request.json().catch(() => null)) as { assetId?: unknown; url?: unknown; sheet?: unknown } | null;
+    const body = (await request.json().catch(() => null)) as { assetId?: unknown; url?: unknown; sheet?: unknown; capture?: unknown } | null;
     const assetId = typeof body?.assetId === 'string' && /^[0-9a-f]{16}$/.test(body.assetId) ? body.assetId : null;
     if (!assetId) throw new Fail(400, 'missing assetId');
-    const rawUrl = typeof body?.url === 'string' ? body.url.trim() : '';
+    // The capture's link is where the clip came from; it replaces `url`.
+    const capture = body?.capture == null ? null : toCapture(body.capture);
+    if (body?.capture != null && !capture) throw new Fail(400, 'capture isn’t one the extension wrote');
+    const rawUrl = capture?.url ?? (typeof body?.url === 'string' ? body.url.trim() : '');
     const url = rawUrl ? publicUrl(rawUrl) : null;
     if (rawUrl && !url) throw new Fail(400, 'That doesn’t look like a public web link');
     const sheet = typeof body?.sheet === 'string' && body.sheet ? body.sheet : null;
@@ -223,7 +278,16 @@ export async function POST(request: Request): Promise<Response> {
     // The page first: what it says is a hint for the tagger.
     let source: AssetSource | null = null;
     let warning: string | undefined;
-    if (url) {
+    if (capture) {
+      try {
+        source = await enrichCapture(client, usage, capture, row);
+      } catch (e) {
+        if (!(e instanceof Fail)) throw e;
+        // What the capture says on its own is still worth keeping.
+        source = captureSource(capture, row.name);
+        warning = e.message;
+      }
+    } else if (url) {
       try {
         source = await enrichPage(client, usage, url, row);
       } catch (e) {

@@ -27,6 +27,7 @@ import {
   VideoSampleSource,
 } from 'mediabunny';
 import { bc1ByteLength, encodeBC1 } from '../media/bc1.ts';
+import { readCapture } from '../media/capture.ts';
 import { L0_MAX_FRAMES, spriteFrameSize, writeL0Header } from '../media/l0format.ts';
 import type { SpriteRendition, VideoRendition } from '../media/library.ts';
 import type { FromIngest, ProbeResult, ToIngest } from './protocol.ts';
@@ -85,8 +86,15 @@ async function probe(file: File): Promise<ProbeResult> {
   try {
     const track = await input.getPrimaryVideoTrack();
     if (!track) throw new Error('no video track');
-    const [end, start, stats] = await Promise.all([track.computeDuration(), track.getFirstTimestamp(), track.computePacketStats(120)]);
-    return { kind: 'video', width: track.displayWidth, height: track.displayHeight, duration: end - start, fps: stats.averagePacketRate };
+    const [end, start, stats, tags] = await Promise.all([
+      track.computeDuration(),
+      track.getFirstTimestamp(),
+      track.computePacketStats(120),
+      // A file without tags, or with ones mediabunny can't read, is just a file.
+      input.getMetadataTags().catch(() => null),
+    ]);
+    const capture = readCapture(tags?.comment);
+    return { kind: 'video', width: track.displayWidth, height: track.displayHeight, duration: end - start, fps: stats.averagePacketRate, ...(capture ? { capture } : {}) };
   } finally {
     input.dispose();
   }

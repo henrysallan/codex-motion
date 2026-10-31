@@ -1,6 +1,7 @@
 node_modules
 dist
 .DS_Store
+__pycache__/
 # Generated media: test sources, scraped videos and the proxy ladder built
 # from them. Anchored to the root so src/media/ (code) isn't caught too.
 /media/

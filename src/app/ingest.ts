@@ -3,6 +3,9 @@
 // its proxies are built; the asset switches to the proxies when they land.
 // A file whose hash is already in the library is just placed. Signed in,
 // new files have to fit the account's upload quota (src/data/quota.ts).
+// A file the Chrome extension saved carries a capture of the page it came
+// from (src/media/capture.ts): that's its source straight away and, signed
+// in, what it's enriched from once its proxies exist.
 
 import { remoteEnabled } from '../config.ts';
 import type { AssetRecord } from '../data/model.ts';
@@ -10,7 +13,9 @@ import { type Reservation, refreshQuota, reserveUpload, uploadsTaken, useQuota }
 import { flush } from '../data/sync.ts';
 import { uploadAsset, uploadBytes } from '../data/upload.ts';
 import type { FromIngest, ProbeResult, ToIngest } from '../ingest/protocol.ts';
+import { captureSource } from '../media/capture.ts';
 import { addAssets } from './actions.ts';
+import { enrichCaptured } from './enrich.ts';
 import { fileSize, plural } from './format.ts';
 import { upsertAsset, useStore } from './store.ts';
 import { toast } from './toasts.tsx';
@@ -53,6 +58,8 @@ function onProgress(msg: FromIngest): void {
     upsertAsset({ ...a, status: 'ready', progress: 1, duration: msg.duration, l0: msg.l0, l1: msg.l1, l2: msg.l2 });
     finish(msg.jobId);
     void upload(job.id);
+    // Saved by the extension: enrich it from its capture (needs the L1 proxy for the frames).
+    if (a.capture) void enrichCaptured(job.id);
   } else if (msg.type === 'error') {
     upsertAsset({ ...a, status: 'error', error: msg.message });
     unreserved.delete(job.id);
@@ -178,9 +185,15 @@ export async function ingestFiles(files: File[], collectionId: string, at: { x: 
     // Videos play from the file itself until proxies exist; images wait
     // for their sprite, which comes back within a moment.
     const blobUrl = meta.kind === 'video' ? URL.createObjectURL(file) : null;
+    const name = file.name.replace(/\.\w+$/, '');
+    // A file the extension saved says where it came from; that shows as its
+    // source until it's enriched.
+    const captured = meta.capture
+      ? { capture: meta.capture, source: captureSource(meta.capture, name), sourceUrl: meta.capture.url, sourceTitle: meta.capture.page?.title ?? file.name }
+      : { sourceTitle: file.name };
     const record: AssetRecord = {
       id,
-      name: file.name.replace(/\.\w+$/, ''),
+      name,
       duration: meta.duration,
       width: meta.width,
       height: meta.height,
@@ -194,7 +207,7 @@ export async function ingestFiles(files: File[], collectionId: string, at: { x: 
       progress: 0,
       addedBy: useStore.getState().user.id,
       addedAt: Date.now(),
-      sourceTitle: file.name,
+      ...captured,
     };
     upsertAsset(record);
     active.set(jobId, { id, blobUrl, name: file.name });

@@ -221,6 +221,12 @@ section, visible only to whoever uploaded it:
   same code `npm run index` uses) from its source and tags. Uploads get no
   SigLIP embedding, so they match on text and tags, not on looks.
 
+**Saved by the extension.** The Chrome extension (`extension/`, below)
+writes what the page said about a video into the file it saves. A file
+that carries it gets its source on drop, before any model runs, and,
+signed in, enriches itself once its proxies are built: `/api/enrich` reads
+the saved page in place of fetching the link (`src/media/capture.ts`).
+
 **Upload limit.** Each account stores up to 1 GB of uploads (decimal, as
 Finder counts), the original and its L0/L1/L2 proxies all counted; the
 account menu shows how much is used. Admins (`private.admins`, today just
@@ -243,6 +249,17 @@ that doesn't finish runs again on the next open
 a collection, since their boards aren't the uploader's to change. Copies
 in Cloudflare's edge cache outside the location that served the delete
 age out on their own.
+
+### Chrome extension
+
+`extension/` is motion.isthishenry.chrome (formerly VideoPull): click its
+toolbar icon, hover a video on any page, click to save it to
+`~/Downloads/motion.isthishenry/`, with the page's details inside the file
+for the app to read. Vimeo, Instagram, X, YouTube and other streamed
+players go through yt-dlp via a small native helper. Load the folder
+unpacked in `chrome://extensions`, or take the zip from the repo's
+Releases; `extension/README.md` has the install steps, and tagging
+`ext-v<version>` publishes a release.
 
 ### Canvas controls
 
@@ -304,7 +321,8 @@ Code map: `src/engine/` (render worker), `src/ingest/` (ingest worker),
 (model and IndexedDB), `src/media/` (BC1 codec, L0 format, shared with the
 scripts), `src/search/` (search engine, worker and taxonomy), `api/` (the
 query embedding function), `scripts/` (clip generator, proxy builder,
-scraper, tagging, embeddings, search index, tests).
+scraper, tagging, embeddings, search index, tests), `extension/` (the
+Chrome extension and its native helper).
 
 ## M0 results
 

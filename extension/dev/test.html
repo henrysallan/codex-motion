@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>motion.isthishenry picker fixture</title>
+<!-- Page metadata for the capture (capture.js), as a studio's project page would have it. -->
+<meta name="description" content="Wabi: a brand film for Acme, made in 2026." />
+<meta property="og:title" content="Wabi — Fixture Studio" />
+<meta property="og:site_name" content="Fixture Studio" />
+<meta property="og:image" content="https://example.com/og.jpg?sig=changes-every-visit" />
+<meta name="author" content="Fixture Studio" />
+<link rel="canonical" href="https://fixture.example/work/wabi" />
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoObject","name":"Wabi","creator":{"@type":"Organization","name":"Fixture Studio"}}</script>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 32px; background: #f4f4f7; color: #222; }
+  h1 { font-size: 18px; margin: 0 0 16px; }
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px; max-width: 1100px; }
+  .card { background: #fff; border-radius: 12px; padding: 16px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+  .card h2 { font-size: 13px; margin: 0 0 10px; color: #666; font-weight: 500; }
+  video { width: 100%; border-radius: 8px; background: #000; display: block; }
+  .player { position: relative; }
+  .player video { pointer-events: none; }
+  .player .controls { position: absolute; inset: 0; display: flex; align-items: flex-end; padding: 12px; color: #fff; background: linear-gradient(transparent 60%, rgba(0,0,0,.6)); border-radius: 8px; cursor: pointer; }
+  #log { margin-top: 24px; font: 12px/1.5 ui-monospace, Menlo, monospace; background: #111; color: #9fe; padding: 12px; border-radius: 8px; min-height: 60px; white-space: pre-wrap; }
+  button { padding: 8px 14px; border-radius: 8px; border: 1px solid #ccc; background: #fff; cursor: pointer; margin-bottom: 20px; }
+</style>
+</head>
+<body>
+<h1>motion.isthishenry picker fixture</h1>
+<button id="start">Start picker (simulates toolbar click)</button>
+
+<div class="grid">
+  <div class="card">
+    <h2>1. Plain &lt;video src&gt; — direct file</h2>
+    <video id="v1" src="https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4" controls muted preload="metadata"></video>
+  </div>
+
+  <div class="card">
+    <h2>2. Custom player — video has pointer-events:none under a controls overlay</h2>
+    <div class="player">
+      <video id="v2" muted preload="metadata">
+        <source src="https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.webm" type="video/webm" />
+      </video>
+      <div class="controls" onclick="log('PAGE received click on controls (should NOT happen while picking)')">▶ custom controls</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>3. Inside an open shadow root</h2>
+    <div id="shadow-host"></div>
+  </div>
+
+  <div class="card">
+    <h2>4. No source yet (kind: none)</h2>
+    <video id="v4" style="height:160px" muted></video>
+  </div>
+
+  <div class="card">
+    <h2>5. HLS manifest src (kind: hls)</h2>
+    <video id="v5" src="https://example.com/stream/master.m3u8" style="height:160px" muted></video>
+  </div>
+
+  <div class="card">
+    <h2>6. blob: MediaSource (kind: blob)</h2>
+    <video id="v6" style="height:160px" muted></video>
+  </div>
+
+  <div class="card">
+    <h2>8. Instagram-style feed post: permalink comes from the timestamp link, not the page URL</h2>
+    <article>
+      <header><a href="/someuser/">someuser</a> · <a href="/explore/tags/design/">#design</a></header>
+      <video id="v8" style="height:160px" muted></video>
+      <footer><a href="/p/Cfixture1/"><time>1h</time></a> · <a href="/p/Cfixture1/liked_by/">42 likes</a></footer>
+    </article>
+  </div>
+
+  <div class="card">
+    <h2>9. Instagram-style carousel: 7 slides, slide 3 showing (read from the dots)</h2>
+    <article id="carousel">
+      <div style="position:relative;overflow:hidden;height:200px;border-radius:8px;background:#000">
+        <ul style="list-style:none;margin:0;padding:0;position:relative;height:100%">
+          <li style="position:absolute;inset:0;transform:translateX(-100%)"><video id="c2" style="width:100%;height:100%" muted></video></li>
+          <li style="position:absolute;inset:0"><video id="c3" style="width:100%;height:100%;object-fit:cover" muted preload="metadata" src="https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"></video></li>
+          <li style="position:absolute;inset:0;transform:translateX(100%)"><video id="c4" style="width:100%;height:100%" muted></video></li>
+        </ul>
+        <div class="ig-dots">
+          <div class="ig-dot"></div><div class="ig-dot"></div><div class="ig-dot ig-dot-on"></div><div class="ig-dot"></div><div class="ig-dot"></div><div class="ig-dot"></div><div class="ig-dot"></div>
+        </div>
+      </div>
+      <footer><a href="/someuser/">someuser</a> · <a href="/p/Cfixture2/"><time>2h</time></a></footer>
+    </article>
+    <style>
+      .ig-dots { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); display:flex; gap:4px; }
+      .ig-dot { width:6px; height:6px; border-radius:50%; background:#a8a8a8; opacity:.6; }
+      .ig-dot-on { background:#0095f6; opacity:1; }
+    </style>
+  </div>
+
+  <div class="card">
+    <h2>10. Project card: the capture reads its heading, text and link</h2>
+    <section>
+      <h3>Selected work</h3>
+      <div class="project">
+        <a href="/work/wabi?utm_source=fixture#top">
+          <video id="v10" style="height:160px" muted preload="metadata" src="https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"></video>
+        </a>
+        <h4>Wabi</h4>
+        <p>Acme · Brand film · 2026</p>
+      </div>
+    </section>
+  </div>
+
+  <div class="card">
+    <h2>7. Vimeo embed iframe (kind: embed → yt-dlp)</h2>
+    <iframe id="v7" src="https://player.vimeo.com/video/76979871?h=8272103f6e&badge=0" style="width:100%;height:220px;border:0;border-radius:8px" allow="fullscreen"></iframe>
+  </div>
+</div>
+
+<div id="log">log:</div>
+
+<script>
+  function log(...a) { document.getElementById('log').textContent += '\n' + a.join(' '); }
+
+  // Case 3
+  const host = document.getElementById('shadow-host');
+  const sh = host.attachShadow({ mode: 'open' });
+  sh.innerHTML = `<style>video{width:100%;border-radius:8px;background:#000;display:block}</style>
+    <video id="v3" src="https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4" muted preload="metadata"></video>`;
+
+  // Case 6
+  try {
+    const ms = new MediaSource();
+    document.getElementById('v6').src = URL.createObjectURL(ms);
+  } catch (e) { log('MediaSource unavailable:', e.message); }
+
+  // --- Stub the extension API so picker.js can run as a plain page script ---
+  window.chrome = window.chrome || {};
+  // Mirrors background.js: a per-tab queue, broadcast as an ordered id list.
+  const stubQueue = [];
+  const deliver = (m) => setTimeout(() => window.__vpDeliver?.(m), 30);
+  const broadcastQueue = () => deliver({ type: 'motion:queue', ids: stubQueue.map((it) => it.id) });
+  window.chrome = window.chrome || {};
+  window.chrome.runtime = {
+    async sendMessage(msg) {
+      const p = msg.payload;
+      log('→ background:', msg.type, msg.id ? `id=${msg.id}` : '', p ? JSON.stringify({ kind: p.kind, src: p.src, w: p.width, h: p.height, permalink: p.permalink, slide: p.slide, urlIndex: p.urlIndex, whole: p.whole, context: p.context, page: p.page && { title: p.page.title, text: p.page.text.length } }) : '');
+      window.__lastPayload = p || window.__lastPayload;
+      switch (msg.type) {
+        case 'motion:queue-add':
+          stubQueue.push({ id: msg.id, payload: p }); broadcastQueue(); return { ok: true, count: stubQueue.length };
+        case 'motion:queue-remove': {
+          const i = stubQueue.findIndex((it) => it.id === msg.id); if (i >= 0) stubQueue.splice(i, 1);
+          broadcastQueue(); return { ok: true, count: stubQueue.length };
+        }
+        case 'motion:queue-run':
+        case 'motion:select': {
+          const items = stubQueue.splice(0);
+          if (msg.type === 'motion:select') items.push({ id: msg.id, payload: p });
+          log(`   run queue: ${items.length} item(s): ${items.map((it) => it.payload.kind).join(', ')}`);
+          items.forEach((it, i) => deliver({ type: 'motion:toast', ok: true, message: `${items.length > 1 ? `${i + 1}/${items.length} · ` : ''}stub result for kind=${it.payload.kind}` }));
+          return { ok: true, count: items.length };
+        }
+        case 'motion:cancel':
+          stubQueue.splice(0); return { ok: true };
+      }
+      return { ok: true };
+    },
+    onMessage: { addListener(fn) { window.__vpDeliver = fn; } },
+  };
+
+  async function startPicker() {
+    // Re-fetch and eval so each start behaves like a fresh executeScript injection
+    // (the background injects providers.js, capture.js, then picker.js).
+    for (const f of ['/providers.js', '/capture.js', '/picker.js']) {
+      const code = await (await fetch(f + '?' + Date.now())).text();
+      (0, eval)(code);
+    }
+  }
+  document.getElementById('start').addEventListener('click', startPicker);
+  window.startPicker = startPicker;
+</script>
+</body>
+</html>

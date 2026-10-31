@@ -63,7 +63,9 @@ export async function enrichPages(pages: PageVideos[], model: string, log: (s: s
   return { done, spent: cost(model, usage) };
 }
 
-export function describePage(p: PageVideos): string {
+// Only what the prompt reads, so a clip that wasn't scraped (an upload the
+// extension saved, api/enrich.ts) can be described too.
+export function describePage(p: { url: string; meta: PageMeta; items: Pick<ScrapedItem, 'appearances' | 'embed'>[] }): string {
   const m = p.meta;
   const videos = p.items.map((item, i) => {
     const a = item.appearances.find((x) => x.pageUrl === p.url) ?? item.appearances[0];

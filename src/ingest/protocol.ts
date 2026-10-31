@@ -1,3 +1,4 @@
+import type { Capture } from '../media/capture.ts';
 import type { SpriteRendition, VideoRendition } from '../media/library.ts';
 
 export interface ProbeResult {
@@ -7,6 +8,9 @@ export interface ProbeResult {
   // Seconds; for images refined once frames are decoded.
   duration: number;
   fps: number;
+  // What the extension saved about where the video came from, when it
+  // saved this file (src/media/capture.ts).
+  capture?: Capture;
 }
 
 export type ToIngest =

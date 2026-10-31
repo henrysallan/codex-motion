@@ -2,6 +2,7 @@
 // planned Postgres tables so a sync layer can push them unchanged: every
 // record is saved whole, last writer wins.
 
+import type { Capture } from '../media/capture.ts';
 import type { Asset } from '../media/library.ts';
 
 export interface AssetRecord extends Asset {
@@ -19,6 +20,10 @@ export interface AssetRecord extends Asset {
   uploaded?: boolean;
   // Uploads: shared to everyone's Feed by the uploader. Off by default.
   inFeed?: boolean;
+  // Uploads saved by the extension: the page context it wrote into the
+  // file, which Enrich sends in place of fetching the page. Kept on this
+  // device only; the cloud row has the source it produced.
+  capture?: Capture;
 }
 
 export interface Point {
